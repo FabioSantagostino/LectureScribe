@@ -1,3 +1,4 @@
+
 name: Build Windows release
 
 on:
@@ -12,38 +13,81 @@ permissions:
 jobs:
   build:
     runs-on: windows-latest
+
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
         with:
           python-version: '3.12'
           architecture: 'x64'
+
       - name: Install dependencies
         shell: pwsh
         run: |
           python -m pip install --upgrade pip
           python -m pip install -r requirements.txt pyinstaller
+
       - name: Verify syntax
         run: python -m py_compile lecturescribe.pyw
+
       - name: Build EXE
         shell: pwsh
         run: |
           python -m PyInstaller --noconfirm --clean --onefile --windowed --name LectureScribe --collect-all faster_whisper --collect-all ctranslate2 --collect-all av --collect-all yt_dlp lecturescribe.pyw
-          if (!(Test-Path 'dist/LectureScribe.exe')) { throw 'EXE missing' }
-      - name: Package download
+
+          if (!(Test-Path 'dist/LectureScribe.exe')) {
+            throw 'EXE missing: build failed'
+          }
+
+      - name: Package Windows release
         shell: pwsh
         run: |
           Copy-Item README.md dist/README.md
           Copy-Item LICENSE dist/LICENSE
-          Compress-Archive -Path dist/LectureScribe.exe,dist/README.md,dist/LICENSE -DestinationPath LectureScribe-Windows-x64.zip
-      - uses: actions/upload-artifact@v4
+
+          Compress-Archive `
+            -Path dist/LectureScribe.exe,dist/README.md,dist/LICENSE `
+            -DestinationPath LectureScribe-Windows-x64.zip `
+            -Force
+
+          if (!(Test-Path 'LectureScribe-Windows-x64.zip')) {
+            throw 'Release ZIP missing'
+          }
+
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+
+          $zip = [System.IO.Compression.ZipFile]::OpenRead(
+            (Resolve-Path 'LectureScribe-Windows-x64.zip').Path
+          )
+
+          try {
+            $entries = @($zip.Entries | ForEach-Object { $_.FullName })
+
+            if ('LectureScribe.exe' -notin $entries) {
+              throw 'LectureScribe.exe missing from ZIP'
+            }
+          }
+          finally {
+            $zip.Dispose()
+          }
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
         with:
           name: LectureScribe-Windows-x64
           path: LectureScribe-Windows-x64.zip
+          if-no-files-found: error
+
       - name: Publish GitHub Release
         if: startsWith(github.ref, 'refs/tags/v')
-        shell: pwsh
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          gh release create "${{ github.ref_name }}" LectureScribe-Windows-x64.zip --repo "${{ github.repository }}" --title "LectureScribe ${{ github.ref_name }}" --notes-file RELEASE_NOTES.md --verify-tag
+        uses: softprops/action-gh-release@v3
+        with:
+          name: LectureScribe ${{ github.ref_name }}
+          body_path: RELEASE_NOTES.md
+          files: LectureScribe-Windows-x64.zip
+          fail_on_unmatched_files: true
+          overwrite_files: true
+          draft: false
