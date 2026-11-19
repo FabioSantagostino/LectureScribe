@@ -1,15 +1,8 @@
-# LectureScribe 1.0
+# LectureScribe v1.1.2 — Interface stability and touchpad scrolling
 
-First major Windows release of LectureScribe.
+- Fixed duplicated scrollbars and shrinking content area when switching UI language or theme, or expanding advanced settings
+- Keeps the CustomTkinter scrollable container alive and rebuilds only its contents
+- Increased vertical scrolling response for Windows precision touchpads, including small wheel deltas
+- Preserved the compact UI, theme follow-system mode, language switching, Webex authentication, and transcription workflow
 
-- Resizable light/dark desktop interface, Italian and English UI
-- Transcribe local media and supported Webex recordings
-- Browser authentication requested only if a recording requires it
-- Detect common installed browsers; cookie-file fallback for Samsung Browser
-- Select Whisper model and spoken-language detection
-- Choose separate output directories for TXT/SRT and retained videos
-- Optional retention of downloaded media; local originals are untouched
-- Progress indicator, cancellation, partial output preservation
-- Minimal diagnostic event logs without credentials or URLs
-
-Whisper models are downloaded on first use. Browser authentication depends on platform/browser security. Review transcripts for technical terms and formulas. This initial release should be tested on a fresh Windows PC before general distribution.
+This version has passed Python syntax and source-structure checks. Verify the interface on Windows, especially repeated theme/language changes and touchpad scrolling, before tagging a release.

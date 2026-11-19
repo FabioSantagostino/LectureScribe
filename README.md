@@ -1,44 +1,52 @@
 # LectureScribe
 
-Local lecture transcription for Windows. **Italiano / English UI**. Convert local media or supported Webex recordings into time-stamped `.txt` and `.srt` files using faster-whisper. Transcription runs locally; it does not upload media to a hosted transcription API.
+**LectureScribe** is a privacy-conscious Windows desktop app for transcribing university lectures and other recordings into timestamped TXT and SRT files using faster-whisper. The app speaks **Italian and English**, and speech recognition runs on your PC.
 
-## Windows download
+## Download and install
 
-Open **Releases** and download `LectureScribe-Windows-x64.zip`. Extract and run `LectureScribe.exe`. Windows may warn about an unsigned, newly distributed executable. **Do not disable security protections automatically**; inspect the source and verify the release before running. The first run of a model requires internet access and disk space to download its weights.
+Open the latest **GitHub Releases** entry, download `LectureScribe-Windows-x64.zip`, extract the archive and run `LectureScribe.exe`. The initial model download requires an internet connection. Windows SmartScreen may warn about an unsigned app; review the code and verify the release rather than disabling security software.
 
-## Features
+## Modern compact interface
 
-- Resizable desktop interface, dark/light appearance
-- Italian and English interface; spoken-language auto-detect, Italian or English override
-- Local video/audio and supported Webex recording URLs
-- Attempts public playback first, then asks for an authenticated browser when required
-- Installed browser detection: Chrome, Edge, Firefox, Brave, Opera, Opera GX, Vivaldi, Chromium, Whale
-- Samsung Browser and other browsers: Netscape-format cookie file fallback (not direct browser extraction)
-- Choose distinct transcript and video destination folders
-- Optional retention of downloaded videos; **existing local files are never deleted**
-- TXT and SRT with timestamps, incremental output, cancellation, `.partial` outputs if cancelled
-- Privacy-friendly diagnostic event codes in `%APPDATA%/LectureScribe/diagnostics.log`
+- Compact resizable interface with rounded controls, a slim modern scroll bar and a simple three-step flow
+- **System theme** by default: follows Windows light/dark preference and reacts to changes; optional Light and Dark overrides using ☀ / ☾ controls
+- English and Italian UI, switchable from the top bar
+- Original recording title used automatically; **Use a custom lecture name** displays the name field only if checked
+- Just **three quality profiles** instead of a long list of internal model names
+- Choose spoken language: **Auto**, **Italian**, or **English**. The matching English-only model is selected automatically *when it exists*
+- Subtle animated processing status, modern progress indicator and cancellation
+- Faster mouse-wheel and Windows precision-touchpad two-finger scrolling, with a single persistent scrollbar
+- CustomTkinter-based controls rather than classic Windows/Tk widgets
+- Advanced settings collapse by default: output directories, retain downloaded video, transcripts/logs shortcuts
 
-## Choosing a model
+## Quality profiles and languages
 
-The model list uses faster-whisper model aliases. Larger models generally need more time, RAM and disk space. Actual speed/accuracy depends on computer and language.
+| Quality setting | Italian or Auto | English | Suggested use |
+|---|---|---|---|
+| ⚡ **Fast** | `small` | `small.en` | Rapid drafts on low-end laptops |
+| ✦ **Balanced** (default) | `turbo` | `turbo` | **Recommended** for most lectures, especially mixed Italian/English terminology |
+| ◎ **Highest quality** | `large-v3` | `large-v3` | Difficult speech; slower and uses more resources |
 
-| Model | When to choose |
-|---|---|
-| `tiny`, `base` | Fastest experiments; low transcription accuracy for technical speech |
-| `small` | Low-resource multilingual transcription |
-| `medium` | Better multilingual accuracy; slower than small |
-| `turbo` / `large-v3-turbo` | **Recommended default** for mixed Italian and English technical lectures based on our test |
-| `large-v3` / `large` | Quality comparison or difficult speech; more demanding and may repeat speech |
-| `large-v1`, `large-v2` | Older large models for compatibility or comparison |
-| `distil-large-v2`, `distil-large-v3`, `distil-large-v3.5` | Distilled variants; may prioritize English, not ideal default for Italian |
-| `*.en` (`tiny.en`, `base.en`, `small.en`, `medium.en`, `distil-small.en`, `distil-medium.en`) | **English-only**, not for Italian lectures |
+Turbo and Large-v3 are multilingual; they do **not** have official `turbo.en` or `large-v3.en` variants. Automatic language recognition uses multilingual models. Larger models are not invariably more accurate; verify formulas, negations, function names and code identifiers using the original recording.
 
-Transcriptions are *not authoritative*: confirm formulas, identifiers, negations and unusual technical terms against original recordings/slides. The app does not transcribe what is only visible on screen.
+## How to use
 
-## Development
+1. Paste the original Webex recording link (or a supported HLS URL), or browse for a local audio/video file.
+2. Optionally check **Use a custom lecture name**. Otherwise the app uses the local filename or the recording title returned by yt-dlp. If metadata has no meaningful title, it falls back to a dated name.
+3. Select **quality** and **spoken language**. Start transcription.
+4. TXT and SRT files are written incrementally into your configured transcript folder. You can customize both output folders under **Advanced options**.
 
-Windows 10/11, Python 3.12 recommended:
+Online videos are downloaded temporarily, then removed after transcription unless **Keep downloaded video** is enabled. Original local files are **never** automatically removed.
+
+## Private Webex recordings
+
+The app first attempts to open a recording **without credentials**. If authentication is required, it opens a browser selector showing supported detected browsers such as Chrome, Edge, Firefox, Brave, Opera, Opera GX, Vivaldi and Chromium. Some browser cookie stores are protected by Windows and cannot be read automatically. **Samsung Browser on Windows** requires an authorized Netscape-format cookie file; it is not natively supported by yt-dlp's browser-cookie import.
+
+Cookies are account credentials. Never commit or share a cookie export or a temporary signed streaming URL. Use recordings you have permission to access.
+
+## Run from source
+
+Requires Windows 10/11 and Python 3.12:
 
 ```powershell
 py -3.12 -m venv .venv
@@ -46,48 +54,27 @@ py -3.12 -m venv .venv
 .\.venv\Scripts\python.exe lecturescribe.pyw
 ```
 
-`requirements.txt` uses the tested PyAV 18 compatibility workaround. Upgrade and re-test before changing the major PyAV version.
+The requirements file pins PyAV 18 due to a compatibility issue observed with the tested faster-whisper version. Future upgrades should be tested first.
 
-To build manually:
+## Build a Windows executable
 
 ```powershell
 .\.venv\Scripts\python.exe -m pip install pyinstaller
-.\.venv\Scripts\python.exe -m PyInstaller --noconfirm --clean --onefile --windowed --name LectureScribe --collect-all faster_whisper --collect-all ctranslate2 --collect-all av --collect-all yt_dlp lecturescribe.pyw
+.\.venv\Scripts\python.exe -m PyInstaller --noconfirm --clean --onefile --windowed --name LectureScribe --collect-all faster_whisper --collect-all ctranslate2 --collect-all av --collect-all yt_dlp --collect-all customtkinter lecturescribe.pyw
 ```
 
-The executable is in `dist/LectureScribe.exe`.
+The output is `dist/LectureScribe.exe`. The GitHub Actions workflow also supports a **manual build** without publishing a release and a **tag-triggered release** with the ZIP automatically attached. For a new version, push code and then create **one** new tag (`v1.1.1`, for example); don't separately create another GitHub release.
 
-## GitHub release automation
+## Privacy and limitations
 
-`.github/workflows/release.yml` builds on Windows for tags named `v*` and attaches a ZIP to the release. First test the app manually, then create and push a tag:
-
-```powershell
-git add .
-git commit -m "Prepare LectureScribe 1.0"
-git push origin main
-git tag v1.0.0
-git push origin v1.0.0
-```
-
-GitHub Actions needs permission to write release contents (`contents: write` is set in workflow; repository settings can also restrict actions). Check the workflow succeeds before sharing the binary.
-
-## Authentication and privacy
-
-- Use recordings you have permission to access.
-- `yt-dlp` initially tries downloading without cookies. If Webex reports an authentication error, it asks you to select an installed browser or a Netscape cookie file. Some Chromium installations restrict access to their cookies; you may need an authorized cookie export.
-- **Samsung Browser on Windows is not a first-class yt-dlp cookie backend.** Its GUI option uses a user-supplied Netscape cookie file only.
-- Cookie files can grant access to your accounts. Never upload, commit, email or publish them, and delete temporary exported copies when no longer needed.
-- The diagnostic log contains only fixed event identifiers. No URL, cookie, file path or media content is intentionally logged.
-- Settings (non-secret paths, theme, model) are stored at `%APPDATA%/LectureScribe/settings.json`.
-
-## Known limitations
-
-- The cancellation button stops at cooperative checkpoints: downloading a fragment or decoding a long chunk can take time.
-- An interrupted transfer or crash may leave incomplete output; a normal cancellation marks transcript files `.partial`.
-- Speech detection and model selection are fallible, and downloaded models can be large.
-- Webex permissions and available formats vary by institution; authentication is not guaranteed on all browser configurations.
-- The GitHub workflow builds an executable but does not replace end-to-end manual testing on a clean Windows install.
+- Audio transcription is local; online recording retrieval and model downloads require internet access.
+- The diagnostics log at `%APPDATA%\LectureScribe\diagnostics.log` records event codes, not media, signed URLs, cookies or file paths.
+- Settings (non-secret UI preferences and output paths) are in `%APPDATA%\LectureScribe\settings.json`.
+- Cancellation is cooperative and can wait for a block/fragment to finish. Incomplete TXT/SRT are preserved with `.partial` names on normal cancellation.
+- Transcription does not extract content shown only in slides or video frames.
+- Recording metadata and access permissions vary by Webex installation; automatic download is not guaranteed for every Webex URL.
+- GitHub CI verifying syntax and building an EXE does **not** replace testing the binary on a clean Windows installation.
 
 ## License
 
-MIT for the LectureScribe source. Bundled third-party libraries and model weights retain their own licenses; review them separately for redistribution.
+LectureScribe is MIT-licensed. Third-party libraries and model weights retain their respective licenses.

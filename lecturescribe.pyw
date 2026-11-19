@@ -4,6 +4,8 @@ from __future__ import annotations
 import json
 import os
 import re
+import sys
+import winreg
 import shutil
 import tempfile
 import threading
@@ -11,11 +13,11 @@ import tkinter as tk
 from datetime import datetime
 from pathlib import Path
 from queue import Empty, Queue
-from tkinter import filedialog, messagebox, ttk
+from tkinter import filedialog, messagebox
+import customtkinter as ctk
 
 import yt_dlp
 from faster_whisper import WhisperModel
-from faster_whisper.utils import available_models
 from yt_dlp.utils import DownloadError
 
 APP = "LectureScribe"
@@ -23,7 +25,28 @@ CONFIG_DIR = Path(os.getenv("APPDATA", str(Path.home()))) / APP
 CONFIG_FILE = CONFIG_DIR / "settings.json"
 DEFAULT_DIR = Path.home() / "Documents" / APP
 EXTS = {".mp4", ".mkv", ".webm", ".mov", ".mp3", ".m4a", ".wav", ".flac", ".aac"}
-MODELS = list(dict.fromkeys([m for m in ["turbo", "large-v3", "medium", "small", "base", "tiny"] if m in available_models()] + available_models()))
+QUALITY_CHOICES = ("fast", "balanced", "accurate")
+
+
+def effective_model(quality: str, language: str) -> str:
+    """Use English-only variants only where a matching variant exists."""
+    if quality == "fast":
+        return "small.en" if language == "en" else "small"
+    if quality == "accurate":
+        return "large-v3"
+    return "turbo"  # Turbo and large-v3 have no English-only .en counterpart.
+
+
+def windows_dark_mode() -> bool:
+    try:
+        key = winreg.OpenKey(winreg.HKEY_CURRENT_USER,
+            r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize")
+        with key:
+            value, _ = winreg.QueryValueEx(key, "AppsUseLightTheme")
+        return value == 0
+    except (OSError, ValueError):
+        return False
+
 BROWSER_MAP = {"Chrome": "chrome", "Edge": "edge", "Firefox": "firefox", "Brave": "brave", "Opera": "opera", "Vivaldi": "vivaldi", "Chromium": "chromium", "Whale": "whale"}
 AUTH_WORDS = ("registered users", "login required", "login to", "sign in", "authentication required", "cookies-from-browser", "cookies from browser", "http error 401", "http error 403", "unauthorized", "forbidden")
 
@@ -35,6 +58,9 @@ I18N = {
   "tagline":"Local transcription of lectures and recordings", "source":"Webex link, HLS URL or local media", "browse":"Browse", "title":"Lecture name", "transcripts":"Transcripts folder", "videos":"Retained videos folder", "choose":"Choose", "keep":"Keep downloaded video", "safety":"Original local media files are never automatically deleted.", "model":"Whisper model", "speech":"Spoken language", "automatic":"Auto-detect", "italian":"Italian", "english":"English", "theme":"Theme", "dark":"Dark", "light":"Light", "lang":"Interface", "start":"Start transcription", "stop":"Cancel", "open":"Open transcripts", "progress":"Progress", "ready":"Ready", "preparing":"Preparing...", "downloading":"Downloading...", "loading":"Loading model (first run downloads it)...", "transcribing":"Transcribing", "finished":"Transcription completed", "stopped":"Cancelled. Any partial transcripts were retained.", "error":"Error", "missing":"Enter a URL or select a file.", "notfound":"File not found.", "auth_title":"Webex authentication", "auth_explain":"This recording requires sign-in. Select a browser with an active session or choose a Netscape cookie file.", "auth_browser":"Browser", "auth_continue":"Continue", "cancel":"Cancel", "cookies":"Netscape cookie file (also Samsung Browser)", "samsung":"Samsung Browser (cookie file)", "no_browsers":"No supported browser detected; you can use a cookie file.", "auth_failed":"Authentication failed. Check your browser session, profile or cookie file.", "download_failed":"Download failed. Check the link and connection. Refresh expired HLS URLs.", "processing_failed":"Processing failed. See the local diagnostics log (no URLs or cookies).", "close_running":"A job is running. Cancel and close once it has stopped?", "model_tip":"Turbo: recommended balance. Large-v3: slower. .en models are English-only.", "output_saved":"Files saved in:", "logs":"Open logs folder", "model_error":"Model unavailable or model download failed.", "select_folder":"Choose folder", "permission":"Cannot write to output folder.", "browser_tip":"Browser security may prevent cookie extraction. Never share cookie files.", "video_copy":"Saving downloaded video...", "bad_source":"Local media and http(s) URLs are supported.", "no_media":"The download did not produce a media file.", "privacy":"Local transcription · no audio uploaded to AI services", "duplicate":"Name already used; selected an alternate name.", "model_warn":"This .en model only recognizes English. Continue?", "yes":"Yes", "no":"No"
  }
 }
+
+I18N["it"].update({'step_source': '01  Scegli la registrazione', 'step_source_help': 'Inserisci un collegamento Webex oppure seleziona un file dal PC.', 'original_filename_hint': 'Per impostazione predefinita useremo il titolo originale della registrazione.', 'custom_name': 'Usa un nome personalizzato', 'step_settings': '02  Qualità e lingua', 'step_settings_help': 'Solo due scelte. La variante del modello si adatta automaticamente alla lingua.', 'quality': 'Qualità della trascrizione', 'quality_fast': '⚡ Veloce', 'quality_balanced': '✦ Bilanciata (consigliata)', 'quality_accurate': '◎ Massima qualità', 'spoken_auto': 'Rileva automaticamente', 'spoken_it': 'Italiano', 'spoken_en': 'Inglese', 'quality_help': 'Veloce: Small (Small.en per inglese). Bilanciata: Turbo. Massima: Large-v3. Turbo e Large-v3 sono già multilingue.', 'advanced': 'Opzioni avanzate e salvataggio', 'step_run': '03  Avvia', 'keep_disabled': 'Il video scaricato verrà eliminato dopo la trascrizione.', 'keep_enabled': 'Il video scaricato verrà conservato nella cartella scelta.', 'title_missing': 'Inserisci un nome personalizzato oppure deseleziona la relativa casella.'})
+I18N["en"].update({'step_source': '01  Choose recording', 'step_source_help': 'Paste a Webex link or choose a local media file.', 'original_filename_hint': "The recording's original title is used automatically.", 'custom_name': 'Use a custom lecture name', 'step_settings': '02  Quality & language', 'step_settings_help': 'Just two choices. The model variant adapts automatically to the spoken language.', 'quality': 'Transcription quality', 'quality_fast': '⚡ Fast', 'quality_balanced': '✦ Balanced (recommended)', 'quality_accurate': '◎ Highest quality', 'spoken_auto': 'Detect automatically', 'spoken_it': 'Italian', 'spoken_en': 'English', 'quality_help': 'Fast: Small (Small.en for English). Balanced: Turbo. Highest: Large-v3. Turbo and Large-v3 are already multilingual.', 'advanced': 'Advanced options & files', 'step_run': '03  Start', 'keep_disabled': 'Downloaded video is deleted after transcription.', 'keep_enabled': 'Downloaded video is retained in your selected folder.', 'title_missing': 'Enter a custom name or uncheck the custom name option.'})
 
 class JobCancelled(Exception):
     pass
@@ -109,28 +135,32 @@ class App:
         self.model_name = None
         config = self.load_config()
         self.ui_language = tk.StringVar(value=config.get("ui_language", "it"))
-        self.ui_theme = tk.StringVar(value=config.get("theme", "dark"))
+        self.ui_theme = tk.StringVar(value=config.get("theme", "auto"))
         self.source = tk.StringVar(value="")
         self.lecture = tk.StringVar(value="")
+        self.custom_name = tk.BooleanVar(value=False)
+        self.advanced_open = tk.BooleanVar(value=False)
         self.transcripts_dir = tk.StringVar(value=config.get("transcripts", str(DEFAULT_DIR / "Trascrizioni")))
         self.videos_dir = tk.StringVar(value=config.get("videos", str(DEFAULT_DIR / "Video")))
         self.keep_video = tk.BooleanVar(value=config.get("keep_video", False))
-        self.model = tk.StringVar(value=config.get("model", "turbo"))
+        self.model = tk.StringVar(value=config.get("quality", "balanced") if config.get("quality", "balanced") in QUALITY_CHOICES else "balanced")
         self.spoken = tk.StringVar(value=config.get("spoken", "auto"))
-        self.status = tk.StringVar()
-        self.style = ttk.Style(root)
-        root.title("LectureScribe 1.0")
-        root.geometry("790x720")
-        root.minsize(590, 620)
-        root.columnconfigure(0, weight=1)
-        root.rowconfigure(0, weight=1)
+        self.status = tk.StringVar(value=I18N[self.ui_language.get()]["ready"])
+        self.progress_value = 0.0
+        self._phase = 0
+        self._system_dark = windows_dark_mode()
+        self._wheel_remainder = 0.0
+        self.scroll_area = None
+        self.main = None
+        root.title("LectureScribe")
+        root.geometry("760x620")
+        root.minsize(590, 470)
         self.apply_theme()
         self.rebuild()
         root.after(100, self.poll)
+        root.after(2500, self.watch_system_theme)
+        root.after(350, self.animate_status)
         root.protocol("WM_DELETE_WINDOW", self.on_close)
-
-    def t(self, key):
-        return I18N[self.ui_language.get()][key]
 
     def load_config(self):
         try:
@@ -143,7 +173,7 @@ class App:
         data = {
             "ui_language": self.ui_language.get(), "theme": self.ui_theme.get(),
             "transcripts": self.transcripts_dir.get(), "videos": self.videos_dir.get(),
-            "keep_video": self.keep_video.get(), "model": self.model.get(), "spoken": self.spoken.get(),
+            "keep_video": self.keep_video.get(), "quality": self.model.get(), "spoken": self.spoken.get(),
         }
         try:
             CONFIG_DIR.mkdir(parents=True, exist_ok=True)
@@ -151,109 +181,250 @@ class App:
         except OSError:
             pass
 
+    def t(self, key):
+        return I18N[self.ui_language.get()].get(key, key)
+
+    def is_dark(self):
+        mode = self.ui_theme.get()
+        return windows_dark_mode() if mode == "auto" else mode == "dark"
+
+    def palette(self):
+        if self.is_dark():
+            return dict(bg="#0d1017", panel="#171c26", inset="#242b39",
+                        fg="#f5f7fb", muted="#a0aaba", line="#2e3646",
+                        accent="#40d6ae", accent_text="#09241b", hover="#30394b")
+        return dict(bg="#f5f7fb", panel="#ffffff", inset="#edf1f7",
+                    fg="#1b2433", muted="#647084", line="#e3e8f0",
+                    accent="#087c68", accent_text="#ffffff", hover="#e5ebf3")
+
     def apply_theme(self):
-        dark = self.ui_theme.get() == "dark"
-        bg, panel, fg, input_bg, accent = ("#151922", "#202634", "#f0f3f9", "#2a3243", "#57bca7") if dark else ("#f5f7fb", "#ffffff", "#162033", "#ffffff", "#137965")
-        self.root.configure(bg=bg)
-        self.style.theme_use("clam")
-        self.style.configure("TFrame", background=bg)
-        self.style.configure("TLabel", background=bg, foreground=fg, font=("Segoe UI", 10))
-        self.style.configure("Title.TLabel", background=bg, foreground=fg, font=("Segoe UI Semibold", 22))
-        self.style.configure("Hint.TLabel", background=bg, foreground="#aab4c4" if dark else "#576275", font=("Segoe UI", 9))
-        self.style.configure("TButton", background=panel, foreground=fg, padding=8, borderwidth=0)
-        self.style.map("TButton", background=[("active", input_bg)])
-        self.style.configure("TEntry", fieldbackground=input_bg, foreground=fg, insertcolor=fg, padding=5)
-        self.style.configure("TCombobox", fieldbackground=input_bg, foreground=fg, background=panel, arrowcolor=fg, padding=4)
-        self.style.map("TCombobox", fieldbackground=[("readonly", input_bg)], foreground=[("readonly", fg)])
-        self.style.configure("TCheckbutton", background=bg, foreground=fg)
-        self.style.map("TCheckbutton", background=[("active", bg)])
-        self.style.configure("TProgressbar", troughcolor=panel, background=accent, borderwidth=0)
-        self.style.configure("TSeparator", background=panel)
+        ctk.set_appearance_mode("Dark" if self.is_dark() else "Light")
+        ctk.set_default_color_theme("blue")
+        self.root.configure(fg_color=self.palette()["bg"])
+
+    def text(self, parent, text, size=12, bold=False, muted=False, **kw):
+        c = self.palette()
+        return ctk.CTkLabel(parent, text=text,
+            font=("Segoe UI", size, "bold" if bold else "normal"),
+            text_color=c["muted"] if muted else c["fg"], **kw)
+
+    def panel(self, parent):
+        c = self.palette()
+        card = ctk.CTkFrame(parent, fg_color=c["panel"], corner_radius=14,
+                            border_width=1, border_color=c["line"])
+        card.pack(fill="x", pady=(0, 10))
+        return card
+
+    def choose_input(self, parent, variable, callback, label):
+        c = self.palette()
+        row = ctk.CTkFrame(parent, fg_color="transparent")
+        row.pack(fill="x", padx=15, pady=(6, 0))
+        ctk.CTkEntry(row, textvariable=variable, height=34, corner_radius=8,
+                     fg_color=c["inset"], border_width=0, text_color=c["fg"]
+                     ).pack(side="left", fill="x", expand=True)
+        self.secondary_button(row, label, callback).pack(side="left", padx=(7, 0))
+        return row
+
+    def secondary_button(self, parent, title, callback, width=90):
+        c = self.palette()
+        return ctk.CTkButton(parent, text=title, command=callback, width=width,
+            height=34, corner_radius=8, fg_color=c["inset"],
+            hover_color=c["hover"], text_color=c["fg"],
+            font=("Segoe UI", 12, "bold"))
+
+    def _wheel(self, event):
+        """Scroll faster on Windows precision touchpads without stacking handlers.
+
+        The scrollable container is persistent: rebuilding only its children
+        avoids duplicate canvases, scrollbars, and CustomTkinter bindings.
+        """
+        if self.scroll_area is None:
+            return "break"
+        delta = getattr(event, "delta", 0)
+        if not delta:
+            return "break"
+        # Touchpads frequently report small deltas (<120), while a wheel
+        # notch is typically 120. Both should feel immediately responsive.
+        steps = min(12, max(3, round(abs(delta) / 120 * 6)))
+        direction = -1 if delta > 0 else 1
+        self.scroll_area._parent_canvas.yview_scroll(direction * steps, "units")
+        return "break"
 
     def rebuild(self):
-        if hasattr(self, "canvas"):
-            self.canvas.destroy()
-            self.scrollbar.destroy()
+        c = self.palette()
         self.apply_theme()
-        self.canvas = tk.Canvas(self.root, borderwidth=0, highlightthickness=0,
-                                bg="#151922" if self.ui_theme.get() == "dark" else "#f5f7fb")
-        self.scrollbar = ttk.Scrollbar(self.root, orient="vertical", command=self.canvas.yview)
-        self.canvas.configure(yscrollcommand=self.scrollbar.set)
-        self.canvas.grid(row=0, column=0, sticky="nsew")
-        self.scrollbar.grid(row=0, column=1, sticky="ns")
-        self.main = ttk.Frame(self.canvas, padding=20)
-        self.window_id = self.canvas.create_window((0, 0), window=self.main, anchor="nw")
-        self.main.bind("<Configure>", lambda event: self.canvas.configure(scrollregion=self.canvas.bbox("all")))
-        self.canvas.bind("<Configure>", lambda event: self.canvas.itemconfigure(self.window_id, width=event.width))
-        self.canvas.bind("<MouseWheel>", lambda event: self.canvas.yview_scroll(-int(event.delta / 120), "units"))
-        self.main.columnconfigure(1, weight=1)
-        row = 0
-        ttk.Label(self.main, text="LectureScribe", style="Title.TLabel").grid(row=row, column=0, columnspan=3, sticky="w")
-        row += 1
-        ttk.Label(self.main, text=self.t("tagline"), style="Hint.TLabel").grid(row=row, column=0, columnspan=3, sticky="w", pady=(0, 14))
-        row += 1
-        bar = ttk.Frame(self.main)
-        bar.grid(row=row, column=0, columnspan=3, sticky="ew", pady=(0, 14))
-        ttk.Label(bar, text=self.t("lang")).pack(side="left", padx=(0, 6))
-        lang = ttk.Combobox(bar, textvariable=self.ui_language, values=["it", "en"], width=5, state="readonly")
-        lang.pack(side="left", padx=(0, 18))
-        lang.bind("<<ComboboxSelected>>", self.update_preferences)
-        ttk.Label(bar, text=self.t("theme")).pack(side="left", padx=(0, 6))
-        theme = ttk.Combobox(bar, textvariable=self.ui_theme, values=["dark", "light"], width=9, state="readonly")
-        theme.pack(side="left")
-        theme.bind("<<ComboboxSelected>>", self.update_preferences)
-        row += 1
-        row = self.entry_row(row, "source", self.source, self.browse_file, "browse")
-        row = self.entry_row(row, "title", self.lecture)
-        row = self.entry_row(row, "transcripts", self.transcripts_dir, lambda: self.choose_dir(self.transcripts_dir), "choose")
-        row = self.entry_row(row, "videos", self.videos_dir, lambda: self.choose_dir(self.videos_dir), "choose")
-        ttk.Checkbutton(self.main, text=self.t("keep"), variable=self.keep_video).grid(row=row, column=0, columnspan=3, sticky="w", pady=(3, 2))
-        row += 1
-        ttk.Label(self.main, text=self.t("safety"), style="Hint.TLabel", wraplength=590).grid(row=row, column=0, columnspan=3, sticky="w", pady=(0, 10))
-        row += 1
-        ttk.Label(self.main, text=self.t("model")).grid(row=row, column=0, sticky="w", pady=4)
-        ttk.Combobox(self.main, textvariable=self.model, values=MODELS, state="readonly").grid(row=row, column=1, columnspan=2, sticky="ew", pady=4)
-        row += 1
-        ttk.Label(self.main, text=self.t("model_tip"), style="Hint.TLabel", wraplength=650).grid(row=row, column=0, columnspan=3, sticky="w", pady=(0, 10))
-        row += 1
-        ttk.Label(self.main, text=self.t("speech")).grid(row=row, column=0, sticky="w", pady=4)
-        ttk.Combobox(self.main, textvariable=self.spoken, values=["auto", "it", "en"], state="readonly").grid(row=row, column=1, columnspan=2, sticky="ew", pady=4)
-        row += 1
-        ttk.Separator(self.main).grid(row=row, column=0, columnspan=3, sticky="ew", pady=(13, 13))
-        row += 1
-        ttk.Label(self.main, text=self.t("progress")).grid(row=row, column=0, columnspan=3, sticky="w")
-        row += 1
-        self.progress = ttk.Progressbar(self.main, maximum=100)
-        self.progress.grid(row=row, column=0, columnspan=3, sticky="ew", pady=(7, 7))
-        row += 1
-        self.status.set(self.t("ready") if not self.running else self.status.get())
-        ttk.Label(self.main, textvariable=self.status, wraplength=650).grid(row=row, column=0, columnspan=3, sticky="w", pady=(0, 14))
-        row += 1
-        self.start_button = ttk.Button(self.main, text=self.t("start"), command=self.start)
-        self.start_button.grid(row=row, column=0, columnspan=3, sticky="ew", pady=3)
-        row += 1
-        self.stop_button = ttk.Button(self.main, text=self.t("stop"), command=self.cancel)
-        self.stop_button.grid(row=row, column=0, columnspan=3, sticky="ew", pady=3)
-        row += 1
-        self.update_buttons()
-        linkrow = ttk.Frame(self.main)
-        linkrow.grid(row=row, column=0, columnspan=3, sticky="ew", pady=(4, 4))
-        ttk.Button(linkrow, text=self.t("open"), command=lambda: self.open_folder(Path(self.transcripts_dir.get()))).pack(side="left", fill="x", expand=True, padx=(0, 5))
-        ttk.Button(linkrow, text=self.t("logs"), command=lambda: self.open_folder(CONFIG_DIR)).pack(side="left", fill="x", expand=True)
-        row += 1
-        ttk.Label(self.main, text=self.t("privacy"), style="Hint.TLabel").grid(row=row, column=0, columnspan=3, sticky="w", pady=(8, 0))
 
-    def entry_row(self, row, label_key, var, browse=None, button_key=None):
-        ttk.Label(self.main, text=self.t(label_key)).grid(row=row, column=0, sticky="w", padx=(0, 12), pady=7)
-        ttk.Entry(self.main, textvariable=var).grid(row=row, column=1, sticky="ew", pady=7)
-        if browse:
-            ttk.Button(self.main, text=self.t(button_key), command=browse).grid(row=row, column=2, padx=(8, 0), pady=7)
-        return row+1
+        # CTkScrollableFrame owns a separate parent container and canvas.
+        # Destroying/recreating it on each setting change left stale widgets
+        # and scrollbars behind. Keep ONE instance for the app lifetime.
+        if self.scroll_area is None:
+            self.scroll_area = ctk.CTkScrollableFrame(
+                self.root, fg_color=c["bg"],
+                scrollbar_button_color=c["line"],
+                scrollbar_button_hover_color=c["muted"],
+                corner_radius=0, border_width=0
+            )
+            self.scroll_area.pack(fill="both", expand=True)
+            self.root.bind_all("<MouseWheel>", self._wheel)
+        else:
+            self.scroll_area.configure(
+                fg_color=c["bg"],
+                scrollbar_button_color=c["line"],
+                scrollbar_button_hover_color=c["muted"]
+            )
+            if self.main is not None:
+                self.main.destroy()
+
+        self.main = ctk.CTkFrame(
+            self.scroll_area, fg_color="transparent", width=650
+        )
+        self.main.pack(fill="x", expand=True, padx=16, pady=12)
+
+        header = ctk.CTkFrame(self.main, fg_color="transparent")
+        header.pack(fill="x", pady=(0, 11))
+        branding = ctk.CTkFrame(header, fg_color="transparent")
+        branding.pack(side="left", fill="x", expand=True)
+        self.text(branding, "◉  LectureScribe", 21, True).pack(anchor="w")
+        self.text(branding, self.t("tagline"), 11, muted=True).pack(anchor="w")
+        tools = ctk.CTkFrame(header, fg_color="transparent")
+        tools.pack(side="right")
+        self.secondary_button(tools, "EN" if self.ui_language.get()=="it" else "IT",
+                              self.toggle_language, width=40).pack(side="left", padx=(0, 6))
+        theme_labels = {"auto":"◐", "light":"☀", "dark":"☾"}
+        self.secondary_button(tools, theme_labels[self.ui_theme.get()],
+                              self.cycle_theme, width=42).pack(side="left")
+
+        source_card = self.panel(self.main)
+        self.text(source_card, self.t("step_source"), 14, True).pack(anchor="w", padx=15, pady=(12, 2))
+        self.choose_input(source_card, self.source, self.browse_file, self.t("browse"))
+        self.text(source_card, self.t("original_filename_hint"), 10, muted=True,
+                  wraplength=580, justify="left").pack(anchor="w", padx=15, pady=(6, 0))
+        ctk.CTkCheckBox(source_card, text=self.t("custom_name"), variable=self.custom_name,
+            command=self.toggle_custom_name, checkbox_width=17, checkbox_height=17,
+            font=("Segoe UI", 11), text_color=c["fg"],
+            fg_color=c["accent"], hover_color=c["accent"]).pack(anchor="w", padx=15, pady=(9, 12))
+        self.custom_row = ctk.CTkFrame(source_card, fg_color="transparent")
+        if self.custom_name.get():
+            self.custom_row.pack(fill="x", padx=15, pady=(0, 12))
+        ctk.CTkEntry(self.custom_row, textvariable=self.lecture, height=34,
+                     fg_color=c["inset"], border_width=0).pack(fill="x")
+
+        settings_card = self.panel(self.main)
+        self.text(settings_card, self.t("step_settings"), 14, True).pack(anchor="w", padx=15, pady=(12, 9))
+        line = ctk.CTkFrame(settings_card, fg_color="transparent")
+        line.pack(fill="x", padx=15, pady=(0, 13))
+        line.grid_columnconfigure(0, weight=1, uniform="half")
+        line.grid_columnconfigure(1, weight=1, uniform="half")
+        self.text(line, self.t("quality"), 11).grid(row=0, column=0, sticky="w")
+        self.text(line, self.t("speech"), 11).grid(row=0, column=1, sticky="w", padx=(10,0))
+        self.quality_label_map = {self.t("quality_"+x): x for x in QUALITY_CHOICES}
+        quality_values = list(self.quality_label_map)
+        self.quality_combo = ctk.CTkOptionMenu(line, values=quality_values, height=34,
+            fg_color=c["inset"], button_color=c["inset"],
+            button_hover_color=c["hover"], text_color=c["fg"],
+            dropdown_fg_color=c["panel"], dropdown_text_color=c["fg"],
+            command=lambda value: self.change_quality(QUALITY_CHOICES.index(self.quality_label_map[value])))
+        self.quality_combo.grid(row=1, column=0, sticky="ew", pady=(5,0))
+        self.quality_combo.set(self.t("quality_"+self.model.get()))
+        self.language_label_map = {self.t("spoken_"+x): x for x in ("auto","it","en")}
+        self.speech_combo = ctk.CTkOptionMenu(line, values=list(self.language_label_map), height=34,
+            fg_color=c["inset"], button_color=c["inset"],
+            button_hover_color=c["hover"], text_color=c["fg"],
+            dropdown_fg_color=c["panel"], dropdown_text_color=c["fg"],
+            command=lambda value: self.change_speech(self.language_label_map[value]))
+        self.speech_combo.grid(row=1, column=1, sticky="ew", padx=(10,0), pady=(5,0))
+        self.speech_combo.set(self.t("spoken_"+self.spoken.get()))
+
+        advanced = self.panel(self.main)
+        arrow = "⌄" if self.advanced_open.get() else "›"
+        self.secondary_button(advanced, arrow + "  " + self.t("advanced"),
+                              self.toggle_advanced, width=245).pack(anchor="w", padx=12, pady=9)
+        if self.advanced_open.get():
+            self.text(advanced, self.t("transcripts"), 11).pack(anchor="w", padx=15)
+            self.choose_input(advanced, self.transcripts_dir, lambda: self.choose_dir(self.transcripts_dir), self.t("choose"))
+            self.text(advanced, self.t("videos"), 11).pack(anchor="w", padx=15, pady=(9,0))
+            self.choose_input(advanced, self.videos_dir, lambda: self.choose_dir(self.videos_dir), self.t("choose"))
+            ctk.CTkCheckBox(advanced, text=self.t("keep"), variable=self.keep_video,
+                command=self.save_config, checkbox_width=17, checkbox_height=17,
+                font=("Segoe UI", 11), text_color=c["fg"],
+                fg_color=c["accent"]).pack(anchor="w", padx=15, pady=(11,9))
+            actions = ctk.CTkFrame(advanced, fg_color="transparent")
+            actions.pack(anchor="w", padx=15, pady=(0,12))
+            self.secondary_button(actions, self.t("open"),
+                lambda: self.open_folder(Path(self.transcripts_dir.get())), 148).pack(side="left", padx=(0,7))
+            self.secondary_button(actions, self.t("logs"),
+                lambda: self.open_folder(CONFIG_DIR), 140).pack(side="left")
+
+        run_card = self.panel(self.main)
+        self.text(run_card, self.t("step_run"), 14, True).pack(anchor="w", padx=15, pady=(11,8))
+        buttons = ctk.CTkFrame(run_card, fg_color="transparent")
+        buttons.pack(fill="x", padx=15)
+        self.start_button = ctk.CTkButton(buttons, text="▶  " + self.t("start"),
+            command=self.start, height=38, corner_radius=9,
+            fg_color=c["accent"], hover_color=c["accent"], text_color=c["accent_text"],
+            font=("Segoe UI", 12, "bold"))
+        self.start_button.pack(side="left", fill="x", expand=True)
+        self.stop_button = self.secondary_button(buttons, "■  " + self.t("stop"), self.cancel, 105)
+        self.stop_button.pack(side="left", padx=(8,0))
+        self.progress = ctk.CTkProgressBar(run_card, height=6, corner_radius=6,
+            progress_color=c["accent"], fg_color=c["inset"])
+        self.progress.pack(fill="x", padx=15, pady=(13,5))
+        self.progress.set(self.progress_value / 100)
+        self.status_label = self.text(run_card, self.status.get(), 10, muted=True)
+        self.status_label.pack(anchor="w", padx=15, pady=(0,11))
+        self.update_buttons()
+        self.text(self.main, "◆  " + self.t("privacy"), 10, muted=True).pack(anchor="center", pady=(0,7))
+
+    def toggle_custom_name(self):
+        if self.custom_name.get():
+            self.custom_row.pack(fill="x", padx=15, pady=(0, 12))
+        else:
+            self.custom_row.pack_forget()
+
+    def toggle_advanced(self):
+        self.advanced_open.set(not self.advanced_open.get())
+        self.rebuild()
+
+    def change_quality(self, index):
+        self.model.set(QUALITY_CHOICES[index])
+        self.save_config()
+
+    def change_speech(self, code):
+        self.spoken.set(code)
+        self.save_config()
+
+    def theme_icon(self):
+        labels = {"it": {"auto": "◐  Sistema", "light": "☀  Chiaro", "dark": "☾  Scuro"},
+                  "en": {"auto": "◐  System", "light": "☀  Light", "dark": "☾  Dark"}}
+        return labels[self.ui_language.get()][self.ui_theme.get()]
+
+    def cycle_theme(self):
+        choices = ("auto", "light", "dark")
+        self.ui_theme.set(choices[(choices.index(self.ui_theme.get()) + 1) % len(choices)])
+        self.update_preferences()
+
+    def toggle_language(self):
+        self.ui_language.set("en" if self.ui_language.get() == "it" else "it")
+        self.update_preferences()
+
+    def watch_system_theme(self):
+        if self.ui_theme.get() == "auto":
+            updated = windows_dark_mode()
+            if updated != self._system_dark:
+                self._system_dark = updated
+                self.rebuild()
+        self.root.after(2500, self.watch_system_theme)
+
+    def animate_status(self):
+        # A subtle animated ellipsis while a job is active, without modifying the source status.
+        if self.running and hasattr(self, "status_label"):
+            self._phase = (self._phase + 1) % 4
+            self.status_label.configure(text=self.status.get() + " " + "·" * self._phase)
+        elif hasattr(self, "status_label"):
+            self.status_label.configure(text=self.status.get())
+        self.root.after(350, self.animate_status)
 
     def update_preferences(self, _event=None):
-        if self.running:
-            # Rendering during an active job is harmless: state is kept in variables.
-            pass
         self.save_config()
         self.rebuild()
 
@@ -296,7 +467,8 @@ class App:
                 if kind == "status":
                     self.status.set(value)
                 elif kind == "progress":
-                    self.progress["value"] = min(100, max(0, value))
+                    self.progress_value = min(100, max(0, value))
+                    self.progress.set(self.progress_value / 100)
                 elif kind == "auth":
                     self.auth_popup()
                 elif kind in ("done", "cancelled", "error"):
@@ -306,7 +478,8 @@ class App:
                         self.root.destroy()
                         return
                     if kind == "done":
-                        self.progress["value"] = 100
+                        self.progress_value = 100
+                        self.progress.set(1)
                         self.status.set(self.t("finished"))
                         messagebox.showinfo(APP, self.t("finished") + "\n" + self.t("output_saved") + "\n" + value)
                     elif kind == "cancelled":
@@ -329,10 +502,10 @@ class App:
         if not source.startswith(("http://", "https://")) and not Path(source).is_file():
             messagebox.showerror(APP, self.t("notfound"))
             return
-        model = self.model.get()
-        if model.endswith(".en") and self.spoken.get() == "it":
-            if not messagebox.askyesno(APP, self.t("model_warn")):
-                return
+        if self.custom_name.get() and not self.lecture.get().strip():
+            messagebox.showwarning(APP, self.t("title_missing"))
+            return
+        model = effective_model(self.model.get(), self.spoken.get())
         transcript_dir = Path(self.transcripts_dir.get()).expanduser()
         video_dir = Path(self.videos_dir.get()).expanduser()
         try:
@@ -343,20 +516,17 @@ class App:
             messagebox.showerror(APP, self.t("permission"))
             return
         self.save_config()
-        name = clean_name(self.lecture.get())
-        num = 2
-        base = name
-        while any((transcript_dir / f"{name}{suffix}").exists() for suffix in (".txt", ".srt", ".partial.txt", ".partial.srt")) or any((video_dir / f"{name}{suffix}").exists() for suffix in EXTS):
-            name = f"{base}_{num}"
-            num += 1
+        # Name resolution happens in the worker after retrieving Webex metadata.
+        requested_name = clean_name(self.lecture.get()) if self.custom_name.get() else None
         self.stop_event.clear()
         self.auth_event.clear()
         self.auth_response = None
         self.running = True
-        self.progress["value"] = 0
+        self.progress_value = 0
+        self.progress.set(0)
         self.status.set(self.t("preparing"))
         self.update_buttons()
-        job = {"source": source, "name": name, "model": model, "spoken": self.spoken.get(), "keep": self.keep_video.get(), "transcripts": transcript_dir, "videos": video_dir}
+        job = {"source": source, "name": requested_name, "model": model, "spoken": self.spoken.get(), "keep": self.keep_video.get(), "transcripts": transcript_dir, "videos": video_dir}
         threading.Thread(target=self.worker, args=(job,), daemon=True).start()
 
     def cancel(self):
@@ -377,38 +547,47 @@ class App:
         if self.stop_event.is_set():
             self.auth_event.set()
             return
-        dlg = tk.Toplevel(self.root)
+        c = self.palette()
+        dlg = ctk.CTkToplevel(self.root)
         self.auth_dialog = dlg
         dlg.title(self.t("auth_title"))
-        dlg.geometry("530x285")
-        dlg.minsize(410, 245)
+        dlg.geometry("460x300")
+        dlg.minsize(410, 270)
         dlg.transient(self.root)
         dlg.grab_set()
-        frame = ttk.Frame(dlg, padding=20)
-        frame.pack(fill="both", expand=True)
-        ttk.Label(frame, text=self.t("auth_explain"), wraplength=480).pack(anchor="w", pady=(0, 12))
+        panel = ctk.CTkFrame(dlg, fg_color="transparent")
+        panel.pack(fill="both", expand=True, padx=20, pady=18)
+        self.text(panel, self.t("auth_title"), 17, True).pack(anchor="w", pady=(0,8))
+        self.text(panel, self.t("auth_explain"), 11, muted=True, wraplength=415,
+                  justify="left").pack(anchor="w", pady=(0,13))
         installed = browser_candidates()
-        options = list(installed) + [self.t("samsung"), self.t("cookies")]
-        selection = tk.StringVar(value=options[0])
-        ttk.Label(frame, text=self.t("auth_browser")).pack(anchor="w")
-        ttk.Combobox(frame, textvariable=selection, values=options, state="readonly").pack(fill="x", pady=(6, 8))
-        ttk.Label(frame, text=self.t("browser_tip"), style="Hint.TLabel", wraplength=480).pack(anchor="w", pady=(0, 8))
-        def resolve(choice):
-            self.auth_response = choice
+        choices = list(installed) + [self.t("samsung"), self.t("cookies")]
+        choice = ctk.StringVar(value=choices[0])
+        ctk.CTkOptionMenu(panel, variable=choice, values=choices, height=36,
+            fg_color=c["inset"], button_color=c["inset"],
+            dropdown_fg_color=c["panel"], text_color=c["fg"]).pack(fill="x")
+        self.text(panel, self.t("browser_tip"), 10, muted=True,
+                  wraplength=415, justify="left").pack(anchor="w", pady=(10,11))
+        def resolve(result):
+            self.auth_response = result
             self.auth_event.set()
             if dlg.winfo_exists():
                 dlg.destroy()
             self.auth_dialog = None
         def confirm():
-            key = selection.get()
+            key = choice.get()
             if key in installed:
                 resolve(installed[key])
             else:
-                cookie_file = filedialog.askopenfilename(parent=dlg, filetypes=[("Netscape cookie file", "*.txt"), ("All files", "*.*")])
-                if cookie_file:
-                    resolve(("file", cookie_file))
-        ttk.Button(frame, text=self.t("auth_continue"), command=confirm).pack(fill="x", pady=(7, 3))
-        ttk.Button(frame, text=self.t("cancel"), command=lambda: resolve(None)).pack(fill="x")
+                path = filedialog.askopenfilename(parent=dlg,
+                    filetypes=[("Netscape cookie file", "*.txt"), ("All files", "*.*")])
+                if path:
+                    resolve(("file", path))
+        row = ctk.CTkFrame(panel, fg_color="transparent")
+        row.pack(fill="x")
+        ctk.CTkButton(row, text=self.t("auth_continue"), command=confirm,
+                      fg_color=c["accent"], text_color=c["accent_text"]).pack(side="left", fill="x", expand=True)
+        self.secondary_button(row, self.t("cancel"), lambda: resolve(None), 110).pack(side="left", padx=(8,0))
         dlg.protocol("WM_DELETE_WINDOW", lambda: resolve(None))
 
     def download(self, url, folder):
@@ -435,11 +614,12 @@ class App:
         def attempt(extra=None):
             opts = {**base_opts, **(extra or {})}
             with yt_dlp.YoutubeDL(opts) as dl:
-                dl.download([url])
+                result = dl.extract_info(url, download=True)
+                return result if isinstance(result, dict) else {}
         self.log("DOWNLOAD_STARTED")
         self.send("status", self.t("downloading"))
         try:
-            attempt()
+            metadata = attempt()
         except DownloadError as exc:
             self.check_cancel()
             error = (str(exc) + " " + " ".join(logger.errors)).lower()
@@ -460,7 +640,7 @@ class App:
             else:
                 extra = {"cookiesfrombrowser": (selection[1], selection[2]) if selection[2] else (selection[1],)}
             try:
-                attempt(extra)
+                metadata = attempt(extra)
             except Exception:
                 self.check_cancel()
                 self.log("AUTH_RETRY_FAILED")
@@ -471,7 +651,8 @@ class App:
             raise RuntimeError("no_media")
         self.log("DOWNLOAD_FINISHED")
         self.send("progress", 35)
-        return max(candidates, key=lambda p: p.stat().st_size)
+        title = metadata.get("title") or metadata.get("fulltitle")
+        return max(candidates, key=lambda p: p.stat().st_size), title
 
     def transcribe(self, job, media, network_media):
         self.check_cancel()
@@ -518,13 +699,28 @@ class App:
         self.log("TRANSCRIPTION_FINISHED")
         return txt_path, srt_path
 
+    def resolve_name(self, job, media, metadata_title=None):
+        desired = job["name"] or metadata_title or media.stem
+        # Avoid generic filenames used internally for Webex downloads.
+        if not job["name"] and (not desired or desired.lower() in {"recording", "video", "hls"}):
+            desired = "Webex_" + datetime.now().strftime("%Y%m%d_%H%M%S")
+        base = clean_name(desired)
+        folder, videos = job["transcripts"], job["videos"]
+        name, num = base, 2
+        while (any((folder / f"{name}{sfx}").exists() for sfx in (".txt", ".srt", ".partial.txt", ".partial.srt"))
+               or any((videos / f"{name}{ext}").exists() for ext in EXTS)):
+            name = f"{base}_{num}"
+            num += 1
+        job["name"] = name
+
     def worker(self, job):
         try:
             source = job["source"]
             is_url = source.startswith(("http://", "https://"))
             if is_url:
                 with tempfile.TemporaryDirectory(prefix="lecturescribe_") as temp:
-                    media = self.download(source, Path(temp))
+                    media, title = self.download(source, Path(temp))
+                    self.resolve_name(job, media, title)
                     self.transcribe(job, media, True)
                     if job["keep"]:
                         self.check_cancel()
@@ -535,6 +731,7 @@ class App:
                 media = Path(source)
                 if not media.is_file():
                     raise RuntimeError("notfound")
+                self.resolve_name(job, media)
                 self.transcribe(job, media, False)
             self.send("done", str(job["transcripts"]))
         except JobCancelled:
@@ -563,6 +760,6 @@ class App:
 
 
 if __name__ == "__main__":
-    root = tk.Tk()
+    root = ctk.CTk()
     App(root)
     root.mainloop()
