@@ -1,6 +1,7 @@
 .venv/
 __pycache__/
 *.pyc
+
 build/
 dist/
 *.spec
@@ -9,13 +10,18 @@ Trascrizioni/
 *.mp4
 *.mkv
 *.webm
-*.m4a
+*.mov
 *.mp3
+*.m4a
 *.wav
+*.aac
+*.flac
 *.srt
-hls.m3u8
+*.partial.txt
+*.partial.srt
 
 cookies.txt
+*.cookies.txt
 .env
 .env.*
 *.log
