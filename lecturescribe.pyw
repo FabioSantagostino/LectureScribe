@@ -1,835 +1,568 @@
+"""LectureScribe — local lecture transcription GUI for Windows."""
+from __future__ import annotations
 
+import json
 import os
 import re
-import sys
 import shutil
 import tempfile
 import threading
 import tkinter as tk
-
-from pathlib import Path
-from queue import Queue, Empty
 from datetime import datetime
-from tkinter import ttk, filedialog, messagebox
+from pathlib import Path
+from queue import Empty, Queue
+from tkinter import filedialog, messagebox, ttk
 
 import yt_dlp
-from yt_dlp.utils import DownloadError
 from faster_whisper import WhisperModel
+from faster_whisper.utils import available_models
+from yt_dlp.utils import DownloadError
 
+APP = "LectureScribe"
+CONFIG_DIR = Path(os.getenv("APPDATA", str(Path.home()))) / APP
+CONFIG_FILE = CONFIG_DIR / "settings.json"
+DEFAULT_DIR = Path.home() / "Documents" / APP
+EXTS = {".mp4", ".mkv", ".webm", ".mov", ".mp3", ".m4a", ".wav", ".flac", ".aac"}
+MODELS = list(dict.fromkeys([m for m in ["turbo", "large-v3", "medium", "small", "base", "tiny"] if m in available_models()] + available_models()))
+BROWSER_MAP = {"Chrome": "chrome", "Edge": "edge", "Firefox": "firefox", "Brave": "brave", "Opera": "opera", "Vivaldi": "vivaldi", "Chromium": "chromium", "Whale": "whale"}
+AUTH_WORDS = ("registered users", "login required", "login to", "sign in", "authentication required", "cookies-from-browser", "cookies from browser", "http error 401", "http error 403", "unauthorized", "forbidden")
 
-APP_NAME = "LectureScribe"
-MODEL_NAME = "turbo"
-
-BASE = Path.home() / "Documents" / APP_NAME
-OUTPUT = BASE / "Trascrizioni"
-OUTPUT.mkdir(parents=True, exist_ok=True)
-
-MEDIA_EXTENSIONS = {
-    ".mp4", ".mkv", ".webm", ".mp3",
-    ".m4a", ".wav", ".aac", ".mov", ".flac"
+I18N = {
+ "it": {
+  "tagline":"Trascrizione locale di lezioni e registrazioni", "source":"Link Webex, URL HLS o file audio/video", "browse":"Sfoglia", "title":"Nome della lezione", "transcripts":"Cartella trascrizioni", "videos":"Cartella video conservati", "choose":"Scegli", "keep":"Conserva il video scaricato", "safety":"I file locali originali non vengono mai eliminati automaticamente.", "model":"Modello Whisper", "speech":"Lingua del parlato", "automatic":"Rilevamento automatico", "italian":"Italiano", "english":"Inglese", "theme":"Tema", "dark":"Scuro", "light":"Chiaro", "lang":"Interfaccia", "start":"Avvia trascrizione", "stop":"Interrompi", "open":"Apri trascrizioni", "progress":"Avanzamento", "ready":"Pronto", "preparing":"Preparazione...", "downloading":"Download in corso...", "loading":"Caricamento del modello (primo avvio: download)...", "transcribing":"Trascrizione", "finished":"Trascrizione completata", "stopped":"Operazione interrotta. Le eventuali trascrizioni parziali sono state conservate.", "error":"Errore", "missing":"Inserisci un URL o seleziona un file.", "notfound":"File non trovato.", "auth_title":"Autenticazione Webex", "auth_explain":"La registrazione richiede l'accesso. Seleziona il browser in cui sei già autenticato, oppure usa un file cookie Netscape.", "auth_browser":"Browser", "auth_continue":"Continua", "cancel":"Annulla", "cookies":"File cookie Netscape (anche Samsung Browser)", "samsung":"Samsung Browser (file cookie)", "no_browsers":"Nessun browser supportato rilevato: puoi usare un file cookie.", "auth_failed":"Accesso non riuscito. Controlla il login nel browser, il profilo o il file cookie.", "download_failed":"Download fallito. Controlla il link e la connessione. Per un URL HLS scaduto, recuperane uno nuovo.", "processing_failed":"Errore nell'elaborazione. Consulta il log diagnostico locale (senza URL o cookie).", "close_running":"L'elaborazione è in corso. Vuoi interromperla e chiudere al termine dell'interruzione?", "model_tip":"Turbo: equilibrio consigliato. Large-v3: più lento. I modelli .en sono solo per inglese.", "output_saved":"File salvati in:", "logs":"Apri cartella log", "model_error":"Modello non disponibile oppure download fallito.", "select_folder":"Seleziona cartella", "permission":"Impossibile scrivere nella cartella di destinazione.", "browser_tip":"La lettura dei cookie può fallire per le protezioni del browser. Non condividere mai file cookie.", "video_copy":"Conservazione del video...", "bad_source":"Sono supportati file locali e URL http(s).", "no_media":"Il download non ha prodotto un file multimediale.", "privacy":"Trascrizione locale · nessun audio inviato a servizi AI", "duplicate":"Nome già in uso: scelto un nome alternativo.", "model_warn":"Questo modello .en riconosce soltanto l'inglese. Continuare?", "yes":"Sì", "no":"No"
+ },
+ "en": {
+  "tagline":"Local transcription of lectures and recordings", "source":"Webex link, HLS URL or local media", "browse":"Browse", "title":"Lecture name", "transcripts":"Transcripts folder", "videos":"Retained videos folder", "choose":"Choose", "keep":"Keep downloaded video", "safety":"Original local media files are never automatically deleted.", "model":"Whisper model", "speech":"Spoken language", "automatic":"Auto-detect", "italian":"Italian", "english":"English", "theme":"Theme", "dark":"Dark", "light":"Light", "lang":"Interface", "start":"Start transcription", "stop":"Cancel", "open":"Open transcripts", "progress":"Progress", "ready":"Ready", "preparing":"Preparing...", "downloading":"Downloading...", "loading":"Loading model (first run downloads it)...", "transcribing":"Transcribing", "finished":"Transcription completed", "stopped":"Cancelled. Any partial transcripts were retained.", "error":"Error", "missing":"Enter a URL or select a file.", "notfound":"File not found.", "auth_title":"Webex authentication", "auth_explain":"This recording requires sign-in. Select a browser with an active session or choose a Netscape cookie file.", "auth_browser":"Browser", "auth_continue":"Continue", "cancel":"Cancel", "cookies":"Netscape cookie file (also Samsung Browser)", "samsung":"Samsung Browser (cookie file)", "no_browsers":"No supported browser detected; you can use a cookie file.", "auth_failed":"Authentication failed. Check your browser session, profile or cookie file.", "download_failed":"Download failed. Check the link and connection. Refresh expired HLS URLs.", "processing_failed":"Processing failed. See the local diagnostics log (no URLs or cookies).", "close_running":"A job is running. Cancel and close once it has stopped?", "model_tip":"Turbo: recommended balance. Large-v3: slower. .en models are English-only.", "output_saved":"Files saved in:", "logs":"Open logs folder", "model_error":"Model unavailable or model download failed.", "select_folder":"Choose folder", "permission":"Cannot write to output folder.", "browser_tip":"Browser security may prevent cookie extraction. Never share cookie files.", "video_copy":"Saving downloaded video...", "bad_source":"Local media and http(s) URLs are supported.", "no_media":"The download did not produce a media file.", "privacy":"Local transcription · no audio uploaded to AI services", "duplicate":"Name already used; selected an alternate name.", "model_warn":"This .en model only recognizes English. Continue?", "yes":"Yes", "no":"No"
+ }
 }
 
-BROWSERS = {
-    "Google Chrome": "chrome",
-    "Microsoft Edge": "edge",
-    "Mozilla Firefox": "firefox",
-    "Brave": "brave",
-    "Opera": "opera",
-    "Vivaldi": "vivaldi",
-    "Chromium": "chromium",
-    "Whale": "whale",
-}
-
-AUTH_MARKERS = (
-    "only available for registered users",
-    "login required",
-    "login to",
-    "sign in",
-    "authentication required",
-    "cookies-from-browser",
-    "cookies from browser",
-    "http error 401",
-    "http error 403",
-    "unauthorized",
-    "forbidden",
-)
-
-
-class Cancelled(Exception):
+class JobCancelled(Exception):
     pass
 
 
-def timestamp(seconds, srt=False):
-    millis = max(0, round(seconds * 1000))
-    hours, rem = divmod(millis, 3600000)
-    minutes, rem = divmod(rem, 60000)
-    secs, ms = divmod(rem, 1000)
-
-    sep = "," if srt else "."
-
-    return (
-        f"{hours:02}:{minutes:02}:"
-        f"{secs:02}{sep}{ms:03}"
-    )
+def millis(seconds: float, srt: bool = False) -> str:
+    value = max(0, round(seconds * 1000))
+    h, rem = divmod(value, 3_600_000)
+    m, rem = divmod(rem, 60_000)
+    sec, ms = divmod(rem, 1000)
+    return f"{h:02}:{m:02}:{sec:02}{',' if srt else '.'}{ms:03}"
 
 
-def safe_name(value):
-    value = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", value)
-    value = value.strip(" .")
-
-    return value[:100] or datetime.now().strftime(
-        "Lezione_%Y%m%d_%H%M%S"
-    )
+def clean_name(name: str) -> str:
+    name = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", name).strip(" .")
+    return name[:90] or datetime.now().strftime("Lecture_%Y%m%d_%H%M%S")
 
 
-def unique_name(name):
-    candidate = name
-    index = 2
+def browser_candidates() -> dict[str, tuple]:
+    local = Path(os.getenv("LOCALAPPDATA", ""))
+    roaming = Path(os.getenv("APPDATA", ""))
+    locations = {
+        "Chrome": local / "Google/Chrome/User Data",
+        "Edge": local / "Microsoft/Edge/User Data",
+        "Firefox": roaming / "Mozilla/Firefox",
+        "Brave": local / "BraveSoftware/Brave-Browser/User Data",
+        "Opera": roaming / "Opera Software/Opera Stable",
+        "Opera GX": roaming / "Opera Software/Opera GX Stable",
+        "Vivaldi": local / "Vivaldi/User Data",
+        "Chromium": local / "Chromium/User Data",
+        "Whale": local / "Naver/Naver Whale/User Data",
+    }
+    found = {}
+    for name, folder in locations.items():
+        if folder.exists():
+            if name == "Opera GX":
+                found[name] = ("browser", "opera", str(folder))
+            else:
+                found[name] = ("browser", BROWSER_MAP[name], None)
+    return found
 
-    while any(
-        (OUTPUT / f"{candidate}{ext}").exists()
-        for ext in (".txt", ".srt", ".mp4", ".mkv", ".webm")
-    ):
-        candidate = f"{name}_{index}"
-        index += 1
 
-    return candidate
-
-
-class SafeLogger:
-    """Non mostra URL firmati, cookie o token."""
-
-    def __init__(self):
-        self.messages = []
-
-    def debug(self, message):
+def ensure_writable(folder: Path):
+    folder.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryFile(dir=folder):
         pass
 
-    def warning(self, message):
-        self.messages.append(str(message).lower())
 
-    def error(self, message):
-        self.messages.append(str(message).lower())
+class PrivateLogger:
+    """yt-dlp messages remain in memory for auth classification; never persist URLs."""
+    def __init__(self):
+        self.errors = []
+    def debug(self, msg):
+        pass
+    def warning(self, msg):
+        self.errors.append(str(msg).lower()[:1500])
+    def error(self, msg):
+        self.errors.append(str(msg).lower()[:1500])
 
 
-class LectureScribe:
-    def __init__(self, root):
+class App:
+    def __init__(self, root: tk.Tk):
         self.root = root
         self.queue = Queue()
-
-        self.running = False
         self.stop_event = threading.Event()
-
         self.auth_event = threading.Event()
-        self.auth_result = None
+        self.auth_response = None
         self.auth_dialog = None
-
-        self.model = None
-
-        root.title("LectureScribe")
-        root.geometry("690x570")
-        root.minsize(580, 500)
-
-        self.build_interface()
-
-        root.after(100, self.poll_queue)
+        self.running = False
+        self.close_when_done = False
+        self.model_instance = None
+        self.model_name = None
+        config = self.load_config()
+        self.ui_language = tk.StringVar(value=config.get("ui_language", "it"))
+        self.ui_theme = tk.StringVar(value=config.get("theme", "dark"))
+        self.source = tk.StringVar(value="")
+        self.lecture = tk.StringVar(value="")
+        self.transcripts_dir = tk.StringVar(value=config.get("transcripts", str(DEFAULT_DIR / "Trascrizioni")))
+        self.videos_dir = tk.StringVar(value=config.get("videos", str(DEFAULT_DIR / "Video")))
+        self.keep_video = tk.BooleanVar(value=config.get("keep_video", False))
+        self.model = tk.StringVar(value=config.get("model", "turbo"))
+        self.spoken = tk.StringVar(value=config.get("spoken", "auto"))
+        self.status = tk.StringVar()
+        self.style = ttk.Style(root)
+        root.title("LectureScribe 1.0")
+        root.geometry("790x720")
+        root.minsize(590, 620)
+        root.columnconfigure(0, weight=1)
+        root.rowconfigure(0, weight=1)
+        self.apply_theme()
+        self.rebuild()
+        root.after(100, self.poll)
         root.protocol("WM_DELETE_WINDOW", self.on_close)
 
-    def build_interface(self):
-        frame = ttk.Frame(self.root, padding=24)
-        frame.pack(fill="both", expand=True)
+    def t(self, key):
+        return I18N[self.ui_language.get()][key]
 
-        ttk.Label(
-            frame,
-            text="LectureScribe",
-            font=("Segoe UI", 24, "bold")
-        ).pack(anchor="w")
+    def load_config(self):
+        try:
+            data = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
+            return data if isinstance(data, dict) else {}
+        except (OSError, ValueError):
+            return {}
 
-        ttk.Label(
-            frame,
-            text="Trascrizione locale di lezioni e registrazioni",
-        ).pack(anchor="w", pady=(2, 23))
+    def save_config(self):
+        data = {
+            "ui_language": self.ui_language.get(), "theme": self.ui_theme.get(),
+            "transcripts": self.transcripts_dir.get(), "videos": self.videos_dir.get(),
+            "keep_video": self.keep_video.get(), "model": self.model.get(), "spoken": self.spoken.get(),
+        }
+        try:
+            CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+            CONFIG_FILE.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+        except OSError:
+            pass
 
-        ttk.Label(
-            frame,
-            text="Link Webex, URL HLS o file locale"
-        ).pack(anchor="w")
+    def apply_theme(self):
+        dark = self.ui_theme.get() == "dark"
+        bg, panel, fg, input_bg, accent = ("#151922", "#202634", "#f0f3f9", "#2a3243", "#57bca7") if dark else ("#f5f7fb", "#ffffff", "#162033", "#ffffff", "#137965")
+        self.root.configure(bg=bg)
+        self.style.theme_use("clam")
+        self.style.configure("TFrame", background=bg)
+        self.style.configure("TLabel", background=bg, foreground=fg, font=("Segoe UI", 10))
+        self.style.configure("Title.TLabel", background=bg, foreground=fg, font=("Segoe UI Semibold", 22))
+        self.style.configure("Hint.TLabel", background=bg, foreground="#aab4c4" if dark else "#576275", font=("Segoe UI", 9))
+        self.style.configure("TButton", background=panel, foreground=fg, padding=8, borderwidth=0)
+        self.style.map("TButton", background=[("active", input_bg)])
+        self.style.configure("TEntry", fieldbackground=input_bg, foreground=fg, insertcolor=fg, padding=5)
+        self.style.configure("TCombobox", fieldbackground=input_bg, foreground=fg, background=panel, arrowcolor=fg, padding=4)
+        self.style.map("TCombobox", fieldbackground=[("readonly", input_bg)], foreground=[("readonly", fg)])
+        self.style.configure("TCheckbutton", background=bg, foreground=fg)
+        self.style.map("TCheckbutton", background=[("active", bg)])
+        self.style.configure("TProgressbar", troughcolor=panel, background=accent, borderwidth=0)
+        self.style.configure("TSeparator", background=panel)
 
-        source_row = ttk.Frame(frame)
-        source_row.pack(fill="x", pady=(7, 18))
+    def rebuild(self):
+        if hasattr(self, "canvas"):
+            self.canvas.destroy()
+            self.scrollbar.destroy()
+        self.apply_theme()
+        self.canvas = tk.Canvas(self.root, borderwidth=0, highlightthickness=0,
+                                bg="#151922" if self.ui_theme.get() == "dark" else "#f5f7fb")
+        self.scrollbar = ttk.Scrollbar(self.root, orient="vertical", command=self.canvas.yview)
+        self.canvas.configure(yscrollcommand=self.scrollbar.set)
+        self.canvas.grid(row=0, column=0, sticky="nsew")
+        self.scrollbar.grid(row=0, column=1, sticky="ns")
+        self.main = ttk.Frame(self.canvas, padding=20)
+        self.window_id = self.canvas.create_window((0, 0), window=self.main, anchor="nw")
+        self.main.bind("<Configure>", lambda event: self.canvas.configure(scrollregion=self.canvas.bbox("all")))
+        self.canvas.bind("<Configure>", lambda event: self.canvas.itemconfigure(self.window_id, width=event.width))
+        self.canvas.bind("<MouseWheel>", lambda event: self.canvas.yview_scroll(-int(event.delta / 120), "units"))
+        self.main.columnconfigure(1, weight=1)
+        row = 0
+        ttk.Label(self.main, text="LectureScribe", style="Title.TLabel").grid(row=row, column=0, columnspan=3, sticky="w")
+        row += 1
+        ttk.Label(self.main, text=self.t("tagline"), style="Hint.TLabel").grid(row=row, column=0, columnspan=3, sticky="w", pady=(0, 14))
+        row += 1
+        bar = ttk.Frame(self.main)
+        bar.grid(row=row, column=0, columnspan=3, sticky="ew", pady=(0, 14))
+        ttk.Label(bar, text=self.t("lang")).pack(side="left", padx=(0, 6))
+        lang = ttk.Combobox(bar, textvariable=self.ui_language, values=["it", "en"], width=5, state="readonly")
+        lang.pack(side="left", padx=(0, 18))
+        lang.bind("<<ComboboxSelected>>", self.update_preferences)
+        ttk.Label(bar, text=self.t("theme")).pack(side="left", padx=(0, 6))
+        theme = ttk.Combobox(bar, textvariable=self.ui_theme, values=["dark", "light"], width=9, state="readonly")
+        theme.pack(side="left")
+        theme.bind("<<ComboboxSelected>>", self.update_preferences)
+        row += 1
+        row = self.entry_row(row, "source", self.source, self.browse_file, "browse")
+        row = self.entry_row(row, "title", self.lecture)
+        row = self.entry_row(row, "transcripts", self.transcripts_dir, lambda: self.choose_dir(self.transcripts_dir), "choose")
+        row = self.entry_row(row, "videos", self.videos_dir, lambda: self.choose_dir(self.videos_dir), "choose")
+        ttk.Checkbutton(self.main, text=self.t("keep"), variable=self.keep_video).grid(row=row, column=0, columnspan=3, sticky="w", pady=(3, 2))
+        row += 1
+        ttk.Label(self.main, text=self.t("safety"), style="Hint.TLabel", wraplength=590).grid(row=row, column=0, columnspan=3, sticky="w", pady=(0, 10))
+        row += 1
+        ttk.Label(self.main, text=self.t("model")).grid(row=row, column=0, sticky="w", pady=4)
+        ttk.Combobox(self.main, textvariable=self.model, values=MODELS, state="readonly").grid(row=row, column=1, columnspan=2, sticky="ew", pady=4)
+        row += 1
+        ttk.Label(self.main, text=self.t("model_tip"), style="Hint.TLabel", wraplength=650).grid(row=row, column=0, columnspan=3, sticky="w", pady=(0, 10))
+        row += 1
+        ttk.Label(self.main, text=self.t("speech")).grid(row=row, column=0, sticky="w", pady=4)
+        ttk.Combobox(self.main, textvariable=self.spoken, values=["auto", "it", "en"], state="readonly").grid(row=row, column=1, columnspan=2, sticky="ew", pady=4)
+        row += 1
+        ttk.Separator(self.main).grid(row=row, column=0, columnspan=3, sticky="ew", pady=(13, 13))
+        row += 1
+        ttk.Label(self.main, text=self.t("progress")).grid(row=row, column=0, columnspan=3, sticky="w")
+        row += 1
+        self.progress = ttk.Progressbar(self.main, maximum=100)
+        self.progress.grid(row=row, column=0, columnspan=3, sticky="ew", pady=(7, 7))
+        row += 1
+        self.status.set(self.t("ready") if not self.running else self.status.get())
+        ttk.Label(self.main, textvariable=self.status, wraplength=650).grid(row=row, column=0, columnspan=3, sticky="w", pady=(0, 14))
+        row += 1
+        self.start_button = ttk.Button(self.main, text=self.t("start"), command=self.start)
+        self.start_button.grid(row=row, column=0, columnspan=3, sticky="ew", pady=3)
+        row += 1
+        self.stop_button = ttk.Button(self.main, text=self.t("stop"), command=self.cancel)
+        self.stop_button.grid(row=row, column=0, columnspan=3, sticky="ew", pady=3)
+        row += 1
+        self.update_buttons()
+        linkrow = ttk.Frame(self.main)
+        linkrow.grid(row=row, column=0, columnspan=3, sticky="ew", pady=(4, 4))
+        ttk.Button(linkrow, text=self.t("open"), command=lambda: self.open_folder(Path(self.transcripts_dir.get()))).pack(side="left", fill="x", expand=True, padx=(0, 5))
+        ttk.Button(linkrow, text=self.t("logs"), command=lambda: self.open_folder(CONFIG_DIR)).pack(side="left", fill="x", expand=True)
+        row += 1
+        ttk.Label(self.main, text=self.t("privacy"), style="Hint.TLabel").grid(row=row, column=0, columnspan=3, sticky="w", pady=(8, 0))
 
-        self.source_var = tk.StringVar()
+    def entry_row(self, row, label_key, var, browse=None, button_key=None):
+        ttk.Label(self.main, text=self.t(label_key)).grid(row=row, column=0, sticky="w", padx=(0, 12), pady=7)
+        ttk.Entry(self.main, textvariable=var).grid(row=row, column=1, sticky="ew", pady=7)
+        if browse:
+            ttk.Button(self.main, text=self.t(button_key), command=browse).grid(row=row, column=2, padx=(8, 0), pady=7)
+        return row+1
 
-        ttk.Entry(
-            source_row,
-            textvariable=self.source_var
-        ).pack(side="left", fill="x", expand=True)
+    def update_preferences(self, _event=None):
+        if self.running:
+            # Rendering during an active job is harmless: state is kept in variables.
+            pass
+        self.save_config()
+        self.rebuild()
 
-        ttk.Button(
-            source_row,
-            text="Sfoglia",
-            command=self.browse
-        ).pack(side="left", padx=(8, 0))
+    def choose_dir(self, var):
+        chosen = filedialog.askdirectory(initialdir=var.get(), title=self.t("select_folder"))
+        if chosen:
+            var.set(chosen)
+            self.save_config()
 
-        ttk.Label(
-            frame,
-            text="Nome della lezione"
-        ).pack(anchor="w")
+    def browse_file(self):
+        selected = filedialog.askopenfilename(filetypes=[("Media", "*.mp4 *.mkv *.webm *.mov *.mp3 *.m4a *.wav *.flac *.aac"), ("All files", "*.*")])
+        if selected:
+            self.source.set(selected)
 
-        self.name_var = tk.StringVar()
+    def open_folder(self, folder):
+        folder.mkdir(parents=True, exist_ok=True)
+        os.startfile(str(folder))
 
-        ttk.Entry(
-            frame,
-            textvariable=self.name_var
-        ).pack(fill="x", pady=(7, 19))
-
-        self.keep_video = tk.BooleanVar(value=False)
-
-        ttk.Checkbutton(
-            frame,
-            text="Conserva il video scaricato",
-            variable=self.keep_video
-        ).pack(anchor="w")
-
-        ttk.Label(
-            frame,
-            text=(
-                "Se disattivato, elimina il download temporaneo. "
-                "I file locali originali non vengono mai eliminati."
-            ),
-            foreground="gray",
-            wraplength=620
-        ).pack(anchor="w", pady=(5, 22))
-
-        ttk.Label(
-            frame,
-            text="Avanzamento"
-        ).pack(anchor="w")
-
-        self.progress = ttk.Progressbar(
-            frame,
-            maximum=100,
-            mode="determinate"
-        )
-        self.progress.pack(fill="x", pady=(9, 9))
-
-        self.status_var = tk.StringVar(value="Pronto")
-
-        ttk.Label(
-            frame,
-            textvariable=self.status_var,
-            wraplength=620
-        ).pack(anchor="w", pady=(0, 8))
-
-        self.start_btn = ttk.Button(
-            frame,
-            text="Avvia trascrizione",
-            command=self.start
-        )
-        self.start_btn.pack(fill="x", pady=(17, 7))
-
-        self.stop_btn = ttk.Button(
-            frame,
-            text="Interrompi",
-            command=self.stop,
-            state="disabled"
-        )
-        self.stop_btn.pack(fill="x", pady=(0, 7))
-
-        ttk.Button(
-            frame,
-            text="Apri cartella trascrizioni",
-            command=self.open_output
-        ).pack(fill="x")
-
-        ttk.Label(
-            frame,
-            text="Modello: Whisper Turbo | CPU INT8",
-            foreground="gray"
-        ).pack(anchor="w", pady=(20, 0))
-
-    def browse(self):
-        path = filedialog.askopenfilename(
-            filetypes=[
-                (
-                    "Audio e video",
-                    "*.mp4 *.mkv *.webm *.mp3 "
-                    "*.m4a *.wav *.aac *.mov *.flac"
-                ),
-                ("Tutti i file", "*.*")
-            ]
-        )
-
-        if path:
-            self.source_var.set(path)
-
-    def open_output(self):
-        OUTPUT.mkdir(parents=True, exist_ok=True)
-        os.startfile(str(OUTPUT))
+    def update_buttons(self):
+        if hasattr(self, "start_button"):
+            self.start_button.configure(state="disabled" if self.running else "normal")
+            self.stop_button.configure(state="normal" if self.running else "disabled")
 
     def send(self, kind, value=None):
         self.queue.put((kind, value))
 
-    def poll_queue(self):
+    def log(self, code):
+        # Log event codes only: never URLs, passwords, browser cookies or exception strings.
+        try:
+            CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+            with (CONFIG_DIR / "diagnostics.log").open("a", encoding="utf-8") as file:
+                file.write(f"{datetime.now().isoformat(timespec='seconds')} {code}\n")
+        except OSError:
+            pass
+
+    def poll(self):
         try:
             while True:
                 kind, value = self.queue.get_nowait()
-
                 if kind == "status":
-                    self.status_var.set(value)
-
+                    self.status.set(value)
                 elif kind == "progress":
-                    self.progress["value"] = max(
-                        0, min(100, value)
-                    )
-
-                elif kind == "auth_required":
-                    self.show_auth_dialog()
-
-                elif kind in ("finished", "error", "cancelled"):
+                    self.progress["value"] = min(100, max(0, value))
+                elif kind == "auth":
+                    self.auth_popup()
+                elif kind in ("done", "cancelled", "error"):
                     self.running = False
-                    self.start_btn["state"] = "normal"
-                    self.stop_btn["state"] = "disabled"
-
-                    if kind == "finished":
+                    self.update_buttons()
+                    if self.close_when_done:
+                        self.root.destroy()
+                        return
+                    if kind == "done":
                         self.progress["value"] = 100
-                        self.status_var.set("Completato")
-                        messagebox.showinfo(
-                            "LectureScribe", value
-                        )
-
+                        self.status.set(self.t("finished"))
+                        messagebox.showinfo(APP, self.t("finished") + "\n" + self.t("output_saved") + "\n" + value)
                     elif kind == "cancelled":
-                        self.status_var.set("Interrotto")
-                        messagebox.showinfo(
-                            "LectureScribe", value
-                        )
-
+                        self.status.set(self.t("stopped"))
+                        messagebox.showinfo(APP, self.t("stopped"))
                     else:
-                        self.status_var.set("Errore")
-                        messagebox.showerror(
-                            "LectureScribe", value
-                        )
-
+                        self.status.set(self.t("error"))
+                        messagebox.showerror(APP, self.t(value))
         except Empty:
             pass
-
-        self.root.after(100, self.poll_queue)
+        self.root.after(100, self.poll)
 
     def start(self):
         if self.running:
             return
-
-        source = self.source_var.get().strip().strip('"')
-
+        source = self.source.get().strip().strip('"')
         if not source:
-            messagebox.showwarning(
-                "Input mancante",
-                "Inserisci un link o seleziona un file."
-            )
+            messagebox.showwarning(APP, self.t("missing"))
             return
-
-        name = safe_name(self.name_var.get())
-        name = unique_name(name)
-
-        self.running = True
+        if not source.startswith(("http://", "https://")) and not Path(source).is_file():
+            messagebox.showerror(APP, self.t("notfound"))
+            return
+        model = self.model.get()
+        if model.endswith(".en") and self.spoken.get() == "it":
+            if not messagebox.askyesno(APP, self.t("model_warn")):
+                return
+        transcript_dir = Path(self.transcripts_dir.get()).expanduser()
+        video_dir = Path(self.videos_dir.get()).expanduser()
+        try:
+            ensure_writable(transcript_dir)
+            if self.keep_video.get():
+                ensure_writable(video_dir)
+        except OSError:
+            messagebox.showerror(APP, self.t("permission"))
+            return
+        self.save_config()
+        name = clean_name(self.lecture.get())
+        num = 2
+        base = name
+        while any((transcript_dir / f"{name}{suffix}").exists() for suffix in (".txt", ".srt", ".partial.txt", ".partial.srt")) or any((video_dir / f"{name}{suffix}").exists() for suffix in EXTS):
+            name = f"{base}_{num}"
+            num += 1
         self.stop_event.clear()
         self.auth_event.clear()
-        self.auth_result = None
-
+        self.auth_response = None
+        self.running = True
         self.progress["value"] = 0
-        self.status_var.set("Preparazione...")
+        self.status.set(self.t("preparing"))
+        self.update_buttons()
+        job = {"source": source, "name": name, "model": model, "spoken": self.spoken.get(), "keep": self.keep_video.get(), "transcripts": transcript_dir, "videos": video_dir}
+        threading.Thread(target=self.worker, args=(job,), daemon=True).start()
 
-        self.start_btn["state"] = "disabled"
-        self.stop_btn["state"] = "normal"
-
-        threading.Thread(
-            target=self.worker,
-            args=(source, name, self.keep_video.get()),
-            daemon=True
-        ).start()
-
-    def stop(self):
+    def cancel(self):
         if not self.running:
             return
-
         self.stop_event.set()
         self.auth_event.set()
-        self.status_var.set(
-            "Interruzione richiesta..."
-        )
-        self.stop_btn["state"] = "disabled"
-
-        if (
-            self.auth_dialog is not None
-            and self.auth_dialog.winfo_exists()
-        ):
+        if self.auth_dialog is not None and self.auth_dialog.winfo_exists():
             self.auth_dialog.destroy()
-            self.auth_dialog = None
+        self.auth_dialog = None
+        self.stop_button.configure(state="disabled")
 
     def check_cancel(self):
         if self.stop_event.is_set():
-            raise Cancelled()
+            raise JobCancelled()
 
-    def show_auth_dialog(self):
+    def auth_popup(self):
         if self.stop_event.is_set():
             self.auth_event.set()
             return
-
-        dialog = tk.Toplevel(self.root)
-        self.auth_dialog = dialog
-
-        dialog.title("Autenticazione Webex")
-        dialog.geometry("480x335")
-        dialog.resizable(False, False)
-        dialog.transient(self.root)
-        dialog.grab_set()
-
-        frame = ttk.Frame(dialog, padding=20)
+        dlg = tk.Toplevel(self.root)
+        self.auth_dialog = dlg
+        dlg.title(self.t("auth_title"))
+        dlg.geometry("530x285")
+        dlg.minsize(410, 245)
+        dlg.transient(self.root)
+        dlg.grab_set()
+        frame = ttk.Frame(dlg, padding=20)
         frame.pack(fill="both", expand=True)
-
-        ttk.Label(
-            frame,
-            text="Accesso richiesto",
-            font=("Segoe UI", 15, "bold")
-        ).pack(anchor="w")
-
-        ttk.Label(
-            frame,
-            text=(
-                "La registrazione potrebbe richiedere "
-                "l'autenticazione. Seleziona il browser "
-                "dove hai effettuato l'accesso a Webex."
-            ),
-            wraplength=420
-        ).pack(anchor="w", pady=(10, 15))
-
-        choices = list(BROWSERS.keys()) + [
-            "Opera GX",
-            "Samsung Browser (file cookie)",
-            "Altro browser (file cookie)"
-        ]
-
-        selected = tk.StringVar(value="Google Chrome")
-
-        combo = ttk.Combobox(
-            frame,
-            textvariable=selected,
-            values=choices,
-            state="readonly"
-        )
-        combo.pack(fill="x")
-
-        ttk.Label(
-            frame,
-            text=(
-                "Samsung Browser non è supportato "
-                "direttamente da yt-dlp. Occorre un file "
-                "cookie Netscape esportato in modo sicuro."
-            ),
-            foreground="gray",
-            wraplength=420
-        ).pack(anchor="w", pady=(12, 12))
-
-        def finish(result):
-            self.auth_result = result
+        ttk.Label(frame, text=self.t("auth_explain"), wraplength=480).pack(anchor="w", pady=(0, 12))
+        installed = browser_candidates()
+        options = list(installed) + [self.t("samsung"), self.t("cookies")]
+        selection = tk.StringVar(value=options[0])
+        ttk.Label(frame, text=self.t("auth_browser")).pack(anchor="w")
+        ttk.Combobox(frame, textvariable=selection, values=options, state="readonly").pack(fill="x", pady=(6, 8))
+        ttk.Label(frame, text=self.t("browser_tip"), style="Hint.TLabel", wraplength=480).pack(anchor="w", pady=(0, 8))
+        def resolve(choice):
+            self.auth_response = choice
             self.auth_event.set()
-
-            if dialog.winfo_exists():
-                dialog.destroy()
-
+            if dlg.winfo_exists():
+                dlg.destroy()
             self.auth_dialog = None
-
         def confirm():
-            browser = selected.get()
-
-            if "file cookie" in browser:
-                path = filedialog.askopenfilename(
-                    parent=dialog,
-                    title="Seleziona cookies.txt",
-                    filetypes=[
-                        ("File cookie", "*.txt"),
-                        ("Tutti i file", "*.*")
-                    ]
-                )
-
-                if path:
-                    finish(("file", path))
-                return
-
-            if browser == "Opera GX":
-                profile = (
-                    Path(os.environ["APPDATA"])
-                    / "Opera Software"
-                    / "Opera GX Stable"
-                )
-
-                finish(("browser", "opera", str(profile)))
-                return
-
-            finish(("browser", BROWSERS[browser], None))
-
-        ttk.Button(
-            frame,
-            text="Continua",
-            command=confirm
-        ).pack(fill="x", pady=(8, 7))
-
-        ttk.Button(
-            frame,
-            text="Annulla",
-            command=lambda: finish(None)
-        ).pack(fill="x")
-
-        dialog.protocol(
-            "WM_DELETE_WINDOW",
-            lambda: finish(None)
-        )
+            key = selection.get()
+            if key in installed:
+                resolve(installed[key])
+            else:
+                cookie_file = filedialog.askopenfilename(parent=dlg, filetypes=[("Netscape cookie file", "*.txt"), ("All files", "*.*")])
+                if cookie_file:
+                    resolve(("file", cookie_file))
+        ttk.Button(frame, text=self.t("auth_continue"), command=confirm).pack(fill="x", pady=(7, 3))
+        ttk.Button(frame, text=self.t("cancel"), command=lambda: resolve(None)).pack(fill="x")
+        dlg.protocol("WM_DELETE_WINDOW", lambda: resolve(None))
 
     def download(self, url, folder):
-        self.send(
-            "status", "Verifica della registrazione..."
-        )
-
-        logger = SafeLogger()
-
-        def progress_hook(data):
+        logger = PrivateLogger()
+        def hook(data):
             self.check_cancel()
-
             if data.get("status") != "downloading":
                 return
-
-            total = (
-                data.get("total_bytes")
-                or data.get("total_bytes_estimate")
-            )
-            done = data.get("downloaded_bytes", 0)
-
+            total = data.get("total_bytes") or data.get("total_bytes_estimate")
             if total:
-                # Download occupa il primo 35%
-                self.send(
-                    "progress",
-                    min(35, done / total * 35)
-                )
-
-        base_options = {
-            "outtmpl": str(
-                folder / "registrazione.%(ext)s"
-            ),
+                self.send("progress", min(35, 35 * data.get("downloaded_bytes", 0) / total))
+        base_opts = {
+            "outtmpl": str(folder / "recording.%(ext)s"),
             "noplaylist": True,
             "concurrent_fragment_downloads": 4,
             "retries": 3,
             "fragment_retries": 3,
-            "progress_hooks": [progress_hook],
+            "progress_hooks": [hook],
+            "logger": logger,
             "quiet": True,
             "no_warnings": True,
-            "logger": logger,
+            "noprogress": True,
         }
-
-        def run_download(extra=None):
-            options = dict(base_options)
-
-            if extra:
-                options.update(extra)
-
-            with yt_dlp.YoutubeDL(options) as ydl:
-                ydl.download([url])
-
-        self.check_cancel()
-
+        def attempt(extra=None):
+            opts = {**base_opts, **(extra or {})}
+            with yt_dlp.YoutubeDL(opts) as dl:
+                dl.download([url])
+        self.log("DOWNLOAD_STARTED")
+        self.send("status", self.t("downloading"))
         try:
-            # Primo tentativo: nessun cookie.
-            run_download()
-
+            attempt()
         except DownloadError as exc:
             self.check_cancel()
-
-            combined_error = (
-                str(exc).lower()
-                + " "
-                + " ".join(logger.messages)
-            )
-
-            requires_auth = any(
-                marker in combined_error
-                for marker in AUTH_MARKERS
-            )
-
-            if not requires_auth:
-                raise RuntimeError(
-                    "Download non riuscito. Controlla "
-                    "l'URL, la connessione e i permessi "
-                    "della registrazione."
-                ) from None
-
-            self.send(
-                "status",
-                "Webex richiede l'autenticazione."
-            )
-
-            self.auth_result = None
+            error = (str(exc) + " " + " ".join(logger.errors)).lower()
+            if not any(token in error for token in AUTH_WORDS):
+                self.log("DOWNLOAD_FAILED_NON_AUTH")
+                raise RuntimeError("download_failed") from None
+            self.log("AUTH_REQUIRED")
+            self.auth_response = None
             self.auth_event.clear()
-
-            self.send("auth_required")
-
-            # Attesa eseguita nel worker, non nella GUI.
+            self.send("auth")
             self.auth_event.wait()
             self.check_cancel()
-
-            choice = self.auth_result
-
-            if choice is None:
-                raise Cancelled()
-
-            extra = {}
-
-            if choice[0] == "file":
-                extra["cookiefile"] = choice[1]
-
+            if self.auth_response is None:
+                raise JobCancelled()
+            selection = self.auth_response
+            if selection[0] == "file":
+                extra = {"cookiefile": selection[1]}
             else:
-                _, browser, profile = choice
-
-                if profile:
-                    extra["cookiesfrombrowser"] = (
-                        browser, profile
-                    )
-                else:
-                    extra["cookiesfrombrowser"] = (
-                        browser,
-                    )
-
-            self.send(
-                "status",
-                "Download con autenticazione..."
-            )
-
+                extra = {"cookiesfrombrowser": (selection[1], selection[2]) if selection[2] else (selection[1],)}
             try:
-                run_download(extra)
-
+                attempt(extra)
             except Exception:
                 self.check_cancel()
-                raise RuntimeError(
-                    "Autenticazione o download falliti. "
-                    "Verifica di essere collegato a Webex "
-                    "nel browser selezionato. Prova anche "
-                    "a chiudere il browser e ritentare."
-                ) from None
-
+                self.log("AUTH_RETRY_FAILED")
+                raise RuntimeError("auth_failed") from None
         self.check_cancel()
-
-        candidates = [
-            path for path in folder.iterdir()
-            if (
-                path.is_file()
-                and path.suffix.lower() in MEDIA_EXTENSIONS
-            )
-        ]
-
+        candidates = [p for p in folder.iterdir() if p.is_file() and p.suffix.lower() in EXTS]
         if not candidates:
-            raise RuntimeError(
-                "Nessun file multimediale scaricato."
-            )
-
+            raise RuntimeError("no_media")
+        self.log("DOWNLOAD_FINISHED")
         self.send("progress", 35)
+        return max(candidates, key=lambda p: p.stat().st_size)
 
-        return max(
-            candidates,
-            key=lambda item: item.stat().st_size
-        )
-
-    def transcribe(self, media, name, is_url):
-        self.send(
-            "status", "Caricamento Whisper Turbo..."
-        )
-
+    def transcribe(self, job, media, network_media):
         self.check_cancel()
-
-        if self.model is None:
-            self.model = WhisperModel(
-                MODEL_NAME,
-                device="cpu",
-                compute_type="int8",
-                cpu_threads=8
-            )
-
+        self.send("status", self.t("loading"))
+        if self.model_instance is None or self.model_name != job["model"]:
+            try:
+                self.model_instance = WhisperModel(job["model"], device="cpu", compute_type="int8", cpu_threads=8)
+                self.model_name = job["model"]
+            except Exception:
+                self.log("MODEL_LOAD_FAILED")
+                raise RuntimeError("model_error") from None
         self.check_cancel()
-
-        self.send(
-            "status", "Trascrizione in corso..."
-        )
-
-        segments, info = self.model.transcribe(
-            str(media),
-            language="it",
-            beam_size=5,
-            vad_filter=True,
-            condition_on_previous_text=True
-        )
-
+        language = None if job["spoken"] == "auto" else job["spoken"]
+        segments, info = self.model_instance.transcribe(str(media), language=language, beam_size=5, vad_filter=True, condition_on_previous_text=True)
         duration = info.duration or 0
-
-        txt_path = OUTPUT / f"{name}.txt"
-        srt_path = OUTPUT / f"{name}.srt"
-
-        completed = False
+        folder = job["transcripts"]
+        txt_path, srt_path = folder / (job["name"] + ".txt"), folder / (job["name"] + ".srt")
         count = 0
-
+        completed = False
+        self.log("TRANSCRIPTION_STARTED")
         try:
-            with (
-                open(txt_path, "w", encoding="utf-8") as txt,
-                open(srt_path, "w", encoding="utf-8") as srt
-            ):
+            with txt_path.open("w", encoding="utf-8") as txt, srt_path.open("w", encoding="utf-8") as srt:
                 for segment in segments:
                     self.check_cancel()
-
-                    content = segment.text.strip()
-                    if not content:
+                    sentence = segment.text.strip()
+                    if not sentence:
                         continue
-
                     count += 1
-
-                    txt.write(
-                        f"[{timestamp(segment.start)}] "
-                        f"{content}\n"
-                    )
-
-                    srt.write(
-                        f"{count}\n"
-                        f"{timestamp(segment.start, True)}"
-                        " --> "
-                        f"{timestamp(segment.end, True)}\n"
-                        f"{content}\n\n"
-                    )
-
+                    txt.write(f"[{millis(segment.start)}] {sentence}\n")
+                    srt.write(f"{count}\n{millis(segment.start, True)} --> {millis(segment.end, True)}\n{sentence}\n\n")
                     txt.flush()
                     srt.flush()
-
                     if duration:
-                        base = 35 if is_url else 0
-                        span = 65 if is_url else 100
-
-                        percent = (
-                            base
-                            + min(
-                                1, segment.end / duration
-                            ) * span
-                        )
-
-                        self.send("progress", percent)
-
-                    self.send(
-                        "status",
-                        "Trascritto fino a "
-                        f"{timestamp(segment.end)}"
-                    )
-
+                        start, portion = (35, 65) if network_media else (0, 100)
+                        self.send("progress", start + min(1, segment.end / duration) * portion)
+                    self.send("status", f"{self.t('transcribing')}: {millis(segment.end)}")
             self.check_cancel()
             completed = True
-
         finally:
-            # In caso di interruzione, manteniamo
-            # i dati già trascritti, indicandoli
-            # chiaramente come incompleti.
             if not completed:
-                for path in (txt_path, srt_path):
-                    if path.exists():
-                        partial = path.with_name(
-                            path.stem + ".partial"
-                            + path.suffix
-                        )
-                        path.replace(partial)
-
+                for file in (txt_path, srt_path):
+                    if file.exists():
+                        file.replace(file.with_name(file.stem + ".partial" + file.suffix))
+        self.log("TRANSCRIPTION_FINISHED")
         return txt_path, srt_path
 
-    def worker(self, source, name, keep_video):
+    def worker(self, job):
         try:
-            is_url = source.startswith(
-                ("https://", "http://")
-            )
-
-            if not is_url:
-                media = Path(source).expanduser()
-
+            source = job["source"]
+            is_url = source.startswith(("http://", "https://"))
+            if is_url:
+                with tempfile.TemporaryDirectory(prefix="lecturescribe_") as temp:
+                    media = self.download(source, Path(temp))
+                    self.transcribe(job, media, True)
+                    if job["keep"]:
+                        self.check_cancel()
+                        self.send("status", self.t("video_copy"))
+                        target = job["videos"] / (job["name"] + media.suffix)
+                        shutil.copy2(media, target)
+            else:
+                media = Path(source)
                 if not media.is_file():
-                    raise RuntimeError(
-                        "File locale non trovato."
-                    )
-
-                self.transcribe(media, name, False)
-
-            else:
-                with tempfile.TemporaryDirectory(
-                    prefix="lecturescribe_"
-                ) as directory:
-
-                    folder = Path(directory)
-                    media = self.download(source, folder)
-
-                    self.transcribe(media, name, True)
-
-                    if keep_video:
-                        self.send(
-                            "status",
-                            "Conservazione del video..."
-                        )
-
-                        destination = (
-                            OUTPUT
-                            / f"{name}{media.suffix}"
-                        )
-
-                        shutil.copy2(media, destination)
-
-                # TemporaryDirectory elimina il video
-                # scaricato, anche quando keep_video
-                # è disattivato.
-
-            self.send(
-                "finished",
-                "Trascrizione completata!\n\n"
-                f"File generati:\n{name}.txt\n{name}.srt"
-            )
-
-        except Cancelled:
-            self.send(
-                "cancelled",
-                "Operazione interrotta.\n\n"
-                "Gli eventuali file di trascrizione "
-                "parziali sono stati conservati."
-            )
-
-        except Exception as exc:
-            # Non mostriamo eccezioni potenzialmente
-            # contenenti URL firmati o cookie.
-            if isinstance(exc, RuntimeError):
-                message = str(exc)
-            else:
-                message = (
-                    "Si è verificato un errore "
-                    "durante l'elaborazione. "
-                    "Controlla il file, i permessi "
-                    "o la connessione."
-                )
-
-            self.send("error", message)
+                    raise RuntimeError("notfound")
+                self.transcribe(job, media, False)
+            self.send("done", str(job["transcripts"]))
+        except JobCancelled:
+            self.log("JOB_CANCELLED")
+            self.send("cancelled")
+        except RuntimeError as error:
+            # All intentionally raised errors are translation keys, never raw URLs.
+            code = str(error)
+            if code not in I18N["en"]:
+                code = "processing_failed"
+            self.log("JOB_ERROR_" + code.upper())
+            self.send("error", code)
+        except Exception:
+            self.log("JOB_ERROR_UNEXPECTED")
+            self.send("error", "processing_failed")
 
     def on_close(self):
         if self.running:
-            answer = messagebox.askyesno(
-                "LectureScribe",
-                "È in corso un'elaborazione.\n"
-                "Vuoi interromperla e chiudere?"
-            )
-
-            if not answer:
+            if not messagebox.askyesno(APP, self.t("close_running")):
                 return
-
-            self.stop_event.set()
-            self.auth_event.set()
-
+            self.close_when_done = True
+            self.cancel()
+            return
+        self.save_config()
         self.root.destroy()
 
 
 if __name__ == "__main__":
     root = tk.Tk()
-    app = LectureScribe(root)
+    App(root)
     root.mainloop()
