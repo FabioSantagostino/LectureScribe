@@ -1,4 +1,4 @@
-\# LectureScribe
+# LectureScribe
 
 
 
@@ -6,27 +6,27 @@ A free, open-source Windows application for transcribing university lectures and
 
 
 
-\## Features
+## Features
 
 
 
-\- Simple desktop interface
+- Simple desktop interface
 
-\- Support for local audio and video files
+- Support for local audio and video files
 
-\- Webex recording download via yt-dlp (compatibility may vary)
+- Webex recording download via yt-dlp (compatibility may vary)
 
-\- Multilingual transcription with Whisper Turbo
+- Multilingual transcription with Whisper Turbo
 
-\- Timestamped TXT and SRT exports
+- Timestamped TXT and SRT exports
 
-\- Optional retention of downloaded videos
+- Optional retention of downloaded videos
 
-\- Local transcription without uploading media to an AI transcription service
+- Local transcription without uploading media to an AI transcription service
 
 
 
-\## Installation
+## Installation
 
 
 
@@ -38,23 +38,23 @@ The Whisper model is downloaded on first use. An internet connection is required
 
 
 
-\## Usage
+## Usage
 
 
 
-1\. Paste a supported recording URL or select a local media file.
+1. Paste a supported recording URL or select a local media file.
 
-2\. Enter a name for the lecture.
+2. Enter a name for the lecture.
 
-3\. Choose whether to retain downloaded video files.
+3. Choose whether to retain downloaded video files.
 
-4\. Start transcription.
+4. Start transcription.
 
-5\. Find your TXT and SRT files in the output folder.
+5. Find your TXT and SRT files in the output folder.
 
 
 
-\## Limitations
+## Limitations
 
 
 
@@ -66,7 +66,7 @@ Webex recordings may require authentication or may not be accessible through the
 
 
 
-\## Privacy
+## Privacy
 
 
 
@@ -78,7 +78,7 @@ Do not publish recordings, transcripts, authentication tokens, or session cookie
 
 
 
-\## Built with
+## Built with
 
 
 
@@ -86,7 +86,7 @@ Python · faster-whisper · yt-dlp · Tkinter
 
 
 
-\## License
+## License
 
 
 
