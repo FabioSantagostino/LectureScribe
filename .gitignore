@@ -26,3 +26,14 @@ cookies.txt
 *.partial.srt
 Trascrizioni/
 Video/
+lecturescribe_build.py
+*.partial.md
+*.md.bak
+*.key
+release-download/
+build/
+dist/
+*.exe
+*.zip
+*.7z
+*.msi

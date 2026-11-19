@@ -19,6 +19,12 @@ import customtkinter as ctk
 import yt_dlp
 from faster_whisper import WhisperModel
 from yt_dlp.utils import DownloadError
+from lecturescribe_cloud import cloud_transcribe
+from lecturescribe_updates import VERSION, fetch_release, stage_update, launch_installer, version_tuple, run_update_mode
+try:
+    from lecturescribe_build import REPO as BUILT_REPO
+except ImportError:
+    BUILT_REPO = ""
 
 APP = "LectureScribe"
 CONFIG_DIR = Path(os.getenv("APPDATA", str(Path.home()))) / APP
@@ -61,6 +67,12 @@ I18N = {
 
 I18N["it"].update({'step_source': '01  Scegli la registrazione', 'step_source_help': 'Inserisci un collegamento Webex oppure seleziona un file dal PC.', 'original_filename_hint': 'Per impostazione predefinita useremo il titolo originale della registrazione.', 'custom_name': 'Usa un nome personalizzato', 'step_settings': '02  Qualità e lingua', 'step_settings_help': 'Solo due scelte. La variante del modello si adatta automaticamente alla lingua.', 'quality': 'Qualità della trascrizione', 'quality_fast': '⚡ Veloce', 'quality_balanced': '✦ Bilanciata (consigliata)', 'quality_accurate': '◎ Massima qualità', 'spoken_auto': 'Rileva automaticamente', 'spoken_it': 'Italiano', 'spoken_en': 'Inglese', 'quality_help': 'Veloce: Small (Small.en per inglese). Bilanciata: Turbo. Massima: Large-v3. Turbo e Large-v3 sono già multilingue.', 'advanced': 'Opzioni avanzate e salvataggio', 'step_run': '03  Avvia', 'keep_disabled': 'Il video scaricato verrà eliminato dopo la trascrizione.', 'keep_enabled': 'Il video scaricato verrà conservato nella cartella scelta.', 'title_missing': 'Inserisci un nome personalizzato oppure deseleziona la relativa casella.'})
 I18N["en"].update({'step_source': '01  Choose recording', 'step_source_help': 'Paste a Webex link or choose a local media file.', 'original_filename_hint': "The recording's original title is used automatically.", 'custom_name': 'Use a custom lecture name', 'step_settings': '02  Quality & language', 'step_settings_help': 'Just two choices. The model variant adapts automatically to the spoken language.', 'quality': 'Transcription quality', 'quality_fast': '⚡ Fast', 'quality_balanced': '✦ Balanced (recommended)', 'quality_accurate': '◎ Highest quality', 'spoken_auto': 'Detect automatically', 'spoken_it': 'Italian', 'spoken_en': 'English', 'quality_help': 'Fast: Small (Small.en for English). Balanced: Turbo. Highest: Large-v3. Turbo and Large-v3 are already multilingual.', 'advanced': 'Advanced options & files', 'step_run': '03  Start', 'keep_disabled': 'Downloaded video is deleted after transcription.', 'keep_enabled': 'Downloaded video is retained in your selected folder.', 'title_missing': 'Enter a custom name or uncheck the custom name option.'})
+
+
+I18N["it"].update({
+ "queue":"Coda di trascrizione", "add_files":"+ File", "add_link":"+ Link", "clear_queue":"Svuota", "queue_empty":"Nessun elemento in coda", "queue_count":"Elementi in coda", "link_prompt":"Incolla il link Webex / HLS", "backend":"Motore di trascrizione", "local_engine":"Locale · Whisper", "cloud_engine":"Cloud · OpenAI API", "api_key":"Chiave API OpenAI (solo per questa sessione)", "cloud_warning":"Modalità cloud: l'audio sarà inviato a OpenAI. Richiede chiave API e può avere costi. I timestamp sono approssimativi (blocchi), nessun SRT cloud.", "auth_remember":"Ricorda metodo di accesso per i prossimi video", "updates":"Aggiornamenti", "update_repo":"Repository GitHub (owner/repo)", "check_update":"Cerca aggiornamenti", "update_found":"Nuova versione disponibile", "no_update":"Hai già l'ultima versione", "install_update":"Scaricare e installare l'aggiornamento? L'app verrà riavviata.", "update_error":"Aggiornamento non riuscito. Controlla repository e connessione.", "cloud_confirm":"La registrazione audio sarà caricata su OpenAI e potrebbe essere fatturata. Continuare?", "cloud_key_missing":"Inserisci la chiave API per il servizio cloud.", "cloud_result":"La trascrizione cloud usa timestamp di blocco approssimativi, non sottotitoli sincronizzati.", "batch_finished":"Elaborazione della coda completata", "batch_failed":"Alcune registrazioni non sono state elaborate. Vedi log diagnostici."})
+I18N["en"].update({
+ "queue":"Transcription queue", "add_files":"+ Files", "add_link":"+ Link", "clear_queue":"Clear", "queue_empty":"No queued items", "queue_count":"Queued items", "link_prompt":"Paste Webex / HLS URL", "backend":"Transcription engine", "local_engine":"Local · Whisper", "cloud_engine":"Cloud · OpenAI API", "api_key":"OpenAI API key (session only)", "cloud_warning":"Cloud mode sends audio to OpenAI. Requires a billed API key. Timestamps are approximate chunk markers, no cloud SRT.", "auth_remember":"Remember authentication method for future videos", "updates":"Updates", "update_repo":"GitHub repository (owner/repo)", "check_update":"Check for updates", "update_found":"A new version is available", "no_update":"You're up to date", "install_update":"Download and install the update? The app will restart.", "update_error":"Update failed. Check repository and connection.", "cloud_confirm":"Audio will be uploaded to OpenAI and may incur charges. Continue?", "cloud_key_missing":"Enter your cloud API key.", "cloud_result":"Cloud timestamps mark approximate chunks, not synchronized subtitles.", "batch_finished":"Queue finished", "batch_failed":"Some recordings failed. See diagnostics."})
 
 class JobCancelled(Exception):
     pass
@@ -133,6 +145,10 @@ class App:
         self.close_when_done = False
         self.model_instance = None
         self.model_name = None
+        self.pending_sources = []
+        self.auth_cached_choice = None
+        self.update_asset = None
+        self.update_temp = None
         config = self.load_config()
         self.ui_language = tk.StringVar(value=config.get("ui_language", "it"))
         self.ui_theme = tk.StringVar(value=config.get("theme", "auto"))
@@ -145,6 +161,12 @@ class App:
         self.keep_video = tk.BooleanVar(value=config.get("keep_video", False))
         self.model = tk.StringVar(value=config.get("quality", "balanced") if config.get("quality", "balanced") in QUALITY_CHOICES else "balanced")
         self.spoken = tk.StringVar(value=config.get("spoken", "auto"))
+        self.engine = tk.StringVar(value=config.get("engine", "local"))
+        self.api_key = tk.StringVar(value="")  # Session-only, never stored or logged.
+        self.remember_auth = tk.BooleanVar(value=config.get("remember_auth", False))
+        self.auth_saved = config.get("auth_choice", None)
+        self.cpu_threads = config.get("cpu_threads", min(8, os.cpu_count() or 8))
+        self.update_repo = tk.StringVar(value=config.get("update_repo") or BUILT_REPO)
         self.status = tk.StringVar(value=I18N[self.ui_language.get()]["ready"])
         self.progress_value = 0.0
         self._phase = 0
@@ -174,6 +196,9 @@ class App:
             "ui_language": self.ui_language.get(), "theme": self.ui_theme.get(),
             "transcripts": self.transcripts_dir.get(), "videos": self.videos_dir.get(),
             "keep_video": self.keep_video.get(), "quality": self.model.get(), "spoken": self.spoken.get(),
+            "engine": self.engine.get(), "update_repo": self.update_repo.get(),
+            "remember_auth": self.remember_auth.get(),
+            "auth_choice": self.auth_saved if self.remember_auth.get() else None,
         }
         try:
             CONFIG_DIR.mkdir(parents=True, exist_ok=True)
@@ -297,6 +322,15 @@ class App:
         source_card = self.panel(self.main)
         self.text(source_card, self.t("step_source"), 14, True).pack(anchor="w", padx=15, pady=(12, 2))
         self.choose_input(source_card, self.source, self.browse_file, self.t("browse"))
+        queue_controls = ctk.CTkFrame(source_card, fg_color="transparent")
+        queue_controls.pack(fill="x", padx=15, pady=(8, 0))
+        self.text(queue_controls, self.t("queue"), 11, True).pack(side="left", padx=(0, 8))
+        self.secondary_button(queue_controls, self.t("add_files"), self.enqueue_files, 66).pack(side="left", padx=(0, 5))
+        self.secondary_button(queue_controls, self.t("add_link"), self.enqueue_link, 65).pack(side="left", padx=(0, 5))
+        self.secondary_button(queue_controls, self.t("clear_queue"), self.clear_queue, 76).pack(side="left")
+        self.queue_label = self.text(source_card, "", 10, muted=True, wraplength=580, justify="left")
+        self.queue_label.pack(anchor="w", padx=15, pady=(4, 2))
+        self.refresh_queue()
         self.text(source_card, self.t("original_filename_hint"), 10, muted=True,
                   wraplength=580, justify="left").pack(anchor="w", padx=15, pady=(6, 0))
         ctk.CTkCheckBox(source_card, text=self.t("custom_name"), variable=self.custom_name,
@@ -335,6 +369,21 @@ class App:
         self.speech_combo.grid(row=1, column=1, sticky="ew", padx=(10,0), pady=(5,0))
         self.speech_combo.set(self.t("spoken_"+self.spoken.get()))
 
+        mode_row = ctk.CTkFrame(settings_card, fg_color="transparent")
+        mode_row.pack(fill="x", padx=15, pady=(0, 12))
+        self.text(mode_row, self.t("backend"), 11).pack(anchor="w", pady=(0, 4))
+        engine_labels = {self.t("local_engine"): "local", self.t("cloud_engine"): "cloud"}
+        mode_combo = ctk.CTkOptionMenu(mode_row, values=list(engine_labels), height=32,
+            fg_color=c["inset"], button_color=c["inset"], text_color=c["fg"],
+            dropdown_fg_color=c["panel"], dropdown_text_color=c["fg"],
+            command=lambda value: self.set_engine(engine_labels[value]))
+        mode_combo.pack(fill="x")
+        mode_combo.set(self.t("cloud_engine") if self.engine.get() == "cloud" else self.t("local_engine"))
+        if self.engine.get() == "cloud":
+            self.text(mode_row, self.t("api_key"), 10).pack(anchor="w", pady=(7, 3))
+            ctk.CTkEntry(mode_row, textvariable=self.api_key, show="•", height=32).pack(fill="x")
+            self.text(mode_row, self.t("cloud_warning"), 10, muted=True, wraplength=590, justify="left").pack(anchor="w", pady=(7, 0))
+
         advanced = self.panel(self.main)
         arrow = "⌄" if self.advanced_open.get() else "›"
         self.secondary_button(advanced, arrow + "  " + self.t("advanced"),
@@ -354,6 +403,9 @@ class App:
                 lambda: self.open_folder(Path(self.transcripts_dir.get())), 148).pack(side="left", padx=(0,7))
             self.secondary_button(actions, self.t("logs"),
                 lambda: self.open_folder(CONFIG_DIR), 140).pack(side="left")
+            self.text(advanced, self.t("updates") + " · v" + VERSION, 11, True).pack(anchor="w", padx=15, pady=(12,0))
+            self.choose_input(advanced, self.update_repo, self.check_updates, self.t("check_update"))
+            self.text(advanced, self.t("update_repo"), 10, muted=True).pack(anchor="w", padx=15, pady=(1,12))
 
         run_card = self.panel(self.main)
         self.text(run_card, self.t("step_run"), 14, True).pack(anchor="w", padx=15, pady=(11,8))
@@ -380,6 +432,60 @@ class App:
             self.custom_row.pack(fill="x", padx=15, pady=(0, 12))
         else:
             self.custom_row.pack_forget()
+
+    def refresh_queue(self):
+        if hasattr(self, "queue_label") and self.queue_label.winfo_exists():
+            names = [Path(x).name if not x.startswith(("https://", "http://")) else "Webex / URL" for x in self.pending_sources[:3]]
+            label = f"{len(self.pending_sources)} · " + ", ".join(names) if names else self.t("queue_empty")
+            self.queue_label.configure(text=label)
+
+    def enqueue_files(self):
+        files = filedialog.askopenfilenames(filetypes=[("Media", "*.mp4 *.mkv *.webm *.mov *.mp3 *.m4a *.wav *.flac *.aac")])
+        self.pending_sources.extend(files)
+        self.refresh_queue()
+
+    def enqueue_link(self):
+        from tkinter.simpledialog import askstring
+        url = askstring(APP, self.t("link_prompt"), parent=self.root)
+        if url and url.strip().startswith(("https://", "http://")):
+            self.pending_sources.append(url.strip())
+            self.refresh_queue()
+
+    def clear_queue(self):
+        if not self.running:
+            self.pending_sources.clear()
+            self.refresh_queue()
+
+    def set_engine(self, value):
+        self.engine.set(value)
+        self.update_preferences()
+
+    def check_updates(self):
+        self.save_config()
+        repo = self.update_repo.get().strip()
+        def task():
+            try:
+                tag, asset = fetch_release(repo)
+                if version_tuple(tag) > version_tuple(VERSION):
+                    self.send("update_found", (tag, asset))
+                else:
+                    self.send("update_none")
+            except Exception:
+                self.send("update_error")
+        threading.Thread(target=task, daemon=True).start()
+
+    def confirm_update(self, data):
+        tag, asset = data
+        if not messagebox.askyesno(APP, f"{self.t('update_found')}: {tag}\n\n{self.t('install_update')}"):
+            return
+        def task():
+            try:
+                folder = Path(tempfile.mkdtemp(prefix="lecturescribe_update_"))
+                binary = stage_update(asset, folder)
+                self.send("update_ready", str(binary))
+            except Exception:
+                self.send("update_error")
+        threading.Thread(target=task, daemon=True).start()
 
     def toggle_advanced(self):
         self.advanced_open.set(not self.advanced_open.get())
@@ -471,6 +577,31 @@ class App:
                     self.progress.set(self.progress_value / 100)
                 elif kind == "auth":
                     self.auth_popup()
+                elif kind == "update_found":
+                    self.confirm_update(value)
+                elif kind == "update_none":
+                    messagebox.showinfo(APP, self.t("no_update"))
+                elif kind == "update_error":
+                    messagebox.showerror(APP, self.t("update_error"))
+                elif kind == "update_ready":
+                    if self.running:
+                        messagebox.showwarning(APP, "Finish the active job before installing")
+                    else:
+                        try:
+                            launch_installer(value)
+                            self.save_config()
+                            self.root.destroy()
+                        except Exception:
+                            messagebox.showerror(APP, self.t("update_error"))
+                elif kind == "done_batch":
+                    self.running = False
+                    self.update_buttons()
+                    total, failed, location = value
+                    self.status.set(self.t("batch_finished"))
+                    messagebox.showinfo(APP, f"{self.t('batch_finished')}: {total-failed}/{total}\n{location}" + ("\n" + self.t("batch_failed") if failed else ""))
+                    if self.close_when_done:
+                        self.root.destroy()
+                        return
                 elif kind in ("done", "cancelled", "error"):
                     self.running = False
                     self.update_buttons()
@@ -496,12 +627,20 @@ class App:
         if self.running:
             return
         source = self.source.get().strip().strip('"')
-        if not source:
+        sources = ([source] if source else []) + self.pending_sources[:]
+        sources = list(dict.fromkeys(sources))
+        if not sources:
             messagebox.showwarning(APP, self.t("missing"))
             return
-        if not source.startswith(("http://", "https://")) and not Path(source).is_file():
+        if any(not x.startswith(("http://", "https://")) and not Path(x).is_file() for x in sources):
             messagebox.showerror(APP, self.t("notfound"))
             return
+        if self.engine.get() == "cloud":
+            if not self.api_key.get().strip():
+                messagebox.showwarning(APP, self.t("cloud_key_missing"))
+                return
+            if not messagebox.askyesno(APP, self.t("cloud_confirm")):
+                return
         if self.custom_name.get() and not self.lecture.get().strip():
             messagebox.showwarning(APP, self.t("title_missing"))
             return
@@ -526,8 +665,10 @@ class App:
         self.progress.set(0)
         self.status.set(self.t("preparing"))
         self.update_buttons()
-        job = {"source": source, "name": requested_name, "model": model, "spoken": self.spoken.get(), "keep": self.keep_video.get(), "transcripts": transcript_dir, "videos": video_dir}
-        threading.Thread(target=self.worker, args=(job,), daemon=True).start()
+        job = {"source": source, "name": requested_name, "model": model, "spoken": self.spoken.get(), "keep": self.keep_video.get(), "transcripts": transcript_dir, "videos": video_dir, "engine": self.engine.get(), "api_key": self.api_key.get() if self.engine.get() == "cloud" else None}
+        self.pending_sources.clear()
+        self.refresh_queue()
+        threading.Thread(target=self.worker_batch, args=(job, sources), daemon=True).start()
 
     def cancel(self):
         if not self.running:
@@ -551,8 +692,8 @@ class App:
         dlg = ctk.CTkToplevel(self.root)
         self.auth_dialog = dlg
         dlg.title(self.t("auth_title"))
-        dlg.geometry("460x300")
-        dlg.minsize(410, 270)
+        dlg.geometry("480x365")
+        dlg.minsize(410, 340)
         dlg.transient(self.root)
         dlg.grab_set()
         panel = ctk.CTkFrame(dlg, fg_color="transparent")
@@ -583,6 +724,8 @@ class App:
                     filetypes=[("Netscape cookie file", "*.txt"), ("All files", "*.*")])
                 if path:
                     resolve(("file", path))
+        ctk.CTkCheckBox(panel, text=self.t("auth_remember"), variable=self.remember_auth,
+            font=("Segoe UI", 10), checkbox_width=17, checkbox_height=17).pack(anchor="w", pady=(0,10))
         row = ctk.CTkFrame(panel, fg_color="transparent")
         row.pack(fill="x")
         ctk.CTkButton(row, text=self.t("auth_continue"), command=confirm,
@@ -627,6 +770,26 @@ class App:
                 self.log("DOWNLOAD_FAILED_NON_AUTH")
                 raise RuntimeError("download_failed") from None
             self.log("AUTH_REQUIRED")
+            cached = self.auth_cached_choice or (self.auth_saved if self.remember_auth.get() else None)
+            if cached:
+                try:
+                    if cached[0] == "file" and not Path(cached[1]).is_file():
+                        raise OSError("Cookie file missing")
+                    extra = {"cookiefile": cached[1]} if cached[0] == "file" else {
+                        "cookiesfrombrowser": (cached[1], cached[2]) if cached[2] else (cached[1],)}
+                    metadata = attempt(extra)
+                    self.check_cancel()
+                    candidates = [p for p in folder.iterdir() if p.is_file() and p.suffix.lower() in EXTS]
+                    if not candidates:
+                        raise RuntimeError("no_media")
+                    self.send("progress", 35)
+                    return max(candidates, key=lambda p: p.stat().st_size), (metadata.get("title") or metadata.get("fulltitle"))
+                except JobCancelled:
+                    raise
+                except Exception:
+                    self.log("CACHED_AUTH_FAILED")
+                    self.auth_cached_choice = None
+                    self.auth_saved = None
             self.auth_response = None
             self.auth_event.clear()
             self.send("auth")
@@ -635,6 +798,10 @@ class App:
             if self.auth_response is None:
                 raise JobCancelled()
             selection = self.auth_response
+            self.auth_cached_choice = selection
+            if self.remember_auth.get():
+                self.auth_saved = list(selection)
+                self.save_config()
             if selection[0] == "file":
                 extra = {"cookiefile": selection[1]}
             else:
@@ -659,7 +826,7 @@ class App:
         self.send("status", self.t("loading"))
         if self.model_instance is None or self.model_name != job["model"]:
             try:
-                self.model_instance = WhisperModel(job["model"], device="cpu", compute_type="int8", cpu_threads=8)
+                self.model_instance = WhisperModel(job["model"], device="cpu", compute_type="int8", cpu_threads=self.cpu_threads)
                 self.model_name = job["model"]
             except Exception:
                 self.log("MODEL_LOAD_FAILED")
@@ -707,46 +874,87 @@ class App:
         base = clean_name(desired)
         folder, videos = job["transcripts"], job["videos"]
         name, num = base, 2
-        while (any((folder / f"{name}{sfx}").exists() for sfx in (".txt", ".srt", ".partial.txt", ".partial.srt"))
+        while (any((folder / f"{name}{sfx}").exists() for sfx in (".txt", ".srt", ".md", ".partial.txt", ".partial.srt", ".partial.md"))
                or any((videos / f"{name}{ext}").exists() for ext in EXTS)):
             name = f"{base}_{num}"
             num += 1
         job["name"] = name
 
-    def worker(self, job):
+    def worker_batch(self, job, sources):
+        failures = 0
+        self.auth_cached_choice = None
+        for index, source in enumerate(sources, start=1):
+            if self.stop_event.is_set():
+                self.send("cancelled")
+                return
+            current = dict(job)
+            current["source"] = source
+            if job["name"] and len(sources) > 1:
+                current["name"] = f"{job['name']}_{index:02}"
+            try:
+                self.process_one(current)
+                self.log("BATCH_ITEM_SUCCESS")
+            except JobCancelled:
+                self.send("cancelled")
+                return
+            except Exception:
+                failures += 1
+                self.log("BATCH_ITEM_FAILED")
+            self.send("status", f"{index}/{len(sources)}")
+        self.send("done_batch", (len(sources), failures, str(job['transcripts'])))
+
+    def process_one(self, job):
+        source = job["source"]
+        if source.startswith(("http://", "https://")):
+            with tempfile.TemporaryDirectory(prefix="lecturescribe_") as temp:
+                media, title = self.download(source, Path(temp))
+                self.resolve_name(job, media, title)
+                self.transcribe_engine(job, media, True)
+                if job["keep"]:
+                    self.check_cancel()
+                    self.send("status", self.t("video_copy"))
+                    shutil.copy2(media, job["videos"] / (job["name"] + media.suffix))
+        else:
+            media = Path(source)
+            if not media.is_file():
+                raise RuntimeError("notfound")
+            self.resolve_name(job, media)
+            self.transcribe_engine(job, media, False)
+
+    def transcribe_engine(self, job, media, network_media):
+        if job["engine"] != "cloud":
+            txt_path, srt_path = self.transcribe(job, media, network_media)
+            self.write_markdown(txt_path, job["name"])
+            return
+        self.send("status", self.t("transcribing"))
+        folder = job["transcripts"]
+        txt = folder / (job["name"] + ".txt")
+        md = folder / (job["name"] + ".md")
+        completed = False
         try:
-            source = job["source"]
-            is_url = source.startswith(("http://", "https://"))
-            if is_url:
-                with tempfile.TemporaryDirectory(prefix="lecturescribe_") as temp:
-                    media, title = self.download(source, Path(temp))
-                    self.resolve_name(job, media, title)
-                    self.transcribe(job, media, True)
-                    if job["keep"]:
-                        self.check_cancel()
-                        self.send("status", self.t("video_copy"))
-                        target = job["videos"] / (job["name"] + media.suffix)
-                        shutil.copy2(media, target)
-            else:
-                media = Path(source)
-                if not media.is_file():
-                    raise RuntimeError("notfound")
-                self.resolve_name(job, media)
-                self.transcribe(job, media, False)
-            self.send("done", str(job["transcripts"]))
-        except JobCancelled:
-            self.log("JOB_CANCELLED")
-            self.send("cancelled")
-        except RuntimeError as error:
-            # All intentionally raised errors are translation keys, never raw URLs.
-            code = str(error)
-            if code not in I18N["en"]:
-                code = "processing_failed"
-            self.log("JOB_ERROR_" + code.upper())
-            self.send("error", code)
-        except Exception:
-            self.log("JOB_ERROR_UNEXPECTED")
-            self.send("error", "processing_failed")
+            def progress(p):
+                base, span = (35, 65) if network_media else (0, 100)
+                self.send("progress", base + span * p / 100)
+            try:
+                lines = cloud_transcribe(media, job["api_key"], job["spoken"],
+                                         progress, self.stop_event.is_set)
+            except InterruptedError:
+                raise JobCancelled()
+            self.check_cancel()
+            txt.write_text("\n".join(lines) + "\n", encoding="utf-8")
+            md.write_text("# " + job["name"] + "\n\n> " + self.t("cloud_result") + "\n\n" +
+                          "\n\n".join(lines) + "\n", encoding="utf-8")
+            completed = True
+        finally:
+            if not completed:
+                for path in (txt, md):
+                    if path.exists():
+                        path.rename(path.with_name(path.stem + ".partial" + path.suffix))
+
+    def write_markdown(self, txt_path, title):
+        content = txt_path.read_text(encoding="utf-8")
+        (txt_path.parent / (title + ".md")).write_text(
+            "# " + title + "\n\n" + content.replace("\n", "\n\n"), encoding="utf-8")
 
     def on_close(self):
         if self.running:
@@ -760,6 +968,8 @@ class App:
 
 
 if __name__ == "__main__":
+    if len(sys.argv) >= 2 and sys.argv[1] == "--apply-update":
+        sys.exit(run_update_mode(sys.argv[2:]))
     root = ctk.CTk()
     App(root)
     root.mainloop()

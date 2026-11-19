@@ -1,8 +1,17 @@
-# LectureScribe v1.1.2 — Interface stability and touchpad scrolling
+# LectureScribe v1.2.0 — release candidate
 
-- Fixed duplicated scrollbars and shrinking content area when switching UI language or theme, or expanding advanced settings
-- Keeps the CustomTkinter scrollable container alive and rebuilds only its contents
-- Increased vertical scrolling response for Windows precision touchpads, including small wheel deltas
-- Preserved the compact UI, theme follow-system mode, language switching, Webex authentication, and transcription workflow
+**Do not publish this as stable until Windows runtime tests pass.**
 
-This version has passed Python syntax and source-structure checks. Verify the interface on Windows, especially repeated theme/language changes and touchpad scrolling, before tagging a release.
+## Added
+- Multi-recording queue (local media and authorized Webex URLs)
+- Markdown alongside TXT/SRT for local transcription
+- Optional cloud transcription using the OpenAI `gpt-transcribe` API (user-supplied key; explicit upload consent)
+- In-app version checking, verified GitHub release download and opt-in EXE replacement
+- Persisted browser/cookie-file choice for repeat Webex recordings
+- Optional Intel CPU thread-count benchmarking
+
+## Limitations
+- Samsung Internet cannot be read natively; remembering a cookie file avoids reselecting it but does not renew expired cookies
+- Cloud mode outputs TXT and Markdown only with approximate chunk timestamps, no reliable SRT
+- Intel OpenVINO GPU/NPU acceleration is not included; CPU profiling only
+- Requires end-to-end test of bundled executable and private Webex login
