@@ -19,12 +19,14 @@ import customtkinter as ctk
 import yt_dlp
 from faster_whisper import WhisperModel
 from yt_dlp.utils import DownloadError
-from lecturescribe_cloud import cloud_transcribe
+from lecturescribe_credentials import Vault
+from lecturescribe_providers import MODELS, verify_key, transcribe_long, ProviderError, available_gemini_models
 from lecturescribe_updates import VERSION, fetch_release, stage_update, launch_installer, version_tuple, run_update_mode
 try:
     from lecturescribe_build import REPO as BUILT_REPO
 except ImportError:
     BUILT_REPO = ""
+OFFICIAL_REPO = "FabioSantagostino/LectureScribe"
 
 APP = "LectureScribe"
 CONFIG_DIR = Path(os.getenv("APPDATA", str(Path.home()))) / APP
@@ -145,11 +147,15 @@ class App:
         self.close_when_done = False
         self.model_instance = None
         self.model_name = None
-        self.pending_sources = []
+        self.pending_sources = []  # {source, name} per item
+        self.vault = Vault(CONFIG_DIR / "api_keys.json")
+        config = self.load_config()
+        self.cloud_provider = tk.StringVar(value=config.get("cloud_provider", "groq"))
+        self.cloud_model = tk.StringVar(value=config.get("cloud_model", "whisper-large-v3-turbo"))
+        self.cloud_key_id = tk.StringVar(value=config.get("cloud_key_id", ""))
         self.auth_cached_choice = None
         self.update_asset = None
         self.update_temp = None
-        config = self.load_config()
         self.ui_language = tk.StringVar(value=config.get("ui_language", "it"))
         self.ui_theme = tk.StringVar(value=config.get("theme", "auto"))
         self.source = tk.StringVar(value="")
@@ -166,12 +172,13 @@ class App:
         self.remember_auth = tk.BooleanVar(value=config.get("remember_auth", False))
         self.auth_saved = config.get("auth_choice", None)
         self.cpu_threads = config.get("cpu_threads", min(8, os.cpu_count() or 8))
-        self.update_repo = tk.StringVar(value=config.get("update_repo") or BUILT_REPO)
+        self.update_repo = tk.StringVar(value=OFFICIAL_REPO)
         self.status = tk.StringVar(value=I18N[self.ui_language.get()]["ready"])
         self.progress_value = 0.0
         self._phase = 0
         self._system_dark = windows_dark_mode()
         self._wheel_remainder = 0.0
+        self._last_palette = None
         self.scroll_area = None
         self.main = None
         root.title("LectureScribe")
@@ -179,6 +186,7 @@ class App:
         root.minsize(590, 470)
         self.apply_theme()
         self.rebuild()
+        self._rendered_language = self.ui_language.get()
         root.after(100, self.poll)
         root.after(2500, self.watch_system_theme)
         root.after(350, self.animate_status)
@@ -196,7 +204,8 @@ class App:
             "ui_language": self.ui_language.get(), "theme": self.ui_theme.get(),
             "transcripts": self.transcripts_dir.get(), "videos": self.videos_dir.get(),
             "keep_video": self.keep_video.get(), "quality": self.model.get(), "spoken": self.spoken.get(),
-            "engine": self.engine.get(), "update_repo": self.update_repo.get(),
+            "engine": self.engine.get(), "cloud_provider":self.cloud_provider.get(),
+            "cloud_model":self.cloud_model.get(), "cloud_key_id":self.cloud_key_id.get(),
             "remember_auth": self.remember_auth.get(),
             "auth_choice": self.auth_saved if self.remember_auth.get() else None,
         }
@@ -258,26 +267,237 @@ class App:
             font=("Segoe UI", 12, "bold"))
 
     def _wheel(self, event):
-        """Scroll faster on Windows precision touchpads without stacking handlers.
-
-        The scrollable container is persistent: rebuilding only its children
-        avoids duplicate canvases, scrollbars, and CustomTkinter bindings.
-        """
-        if self.scroll_area is None:
-            return "break"
+        """Pixel-based Windows touchpad scrolling; never rebuild the content."""
+        if self.scroll_area is None or event.widget.winfo_toplevel() != self.root:
+            return None
         delta = getattr(event, "delta", 0)
         if not delta:
-            return "break"
-        # Touchpads frequently report small deltas (<120), while a wheel
-        # notch is typically 120. Both should feel immediately responsive.
-        steps = min(12, max(3, round(abs(delta) / 120 * 6)))
-        direction = -1 if delta > 0 else 1
-        self.scroll_area._parent_canvas.yview_scroll(direction * steps, "units")
+            return None
+        canvas = self.scroll_area._parent_canvas
+        region = canvas.bbox("all")
+        if not region:
+            return None
+        scrollable = max(0, region[3] - canvas.winfo_height())
+        if not scrollable:
+            return None
+        # Precision touchpads can emit dozens of tiny deltas. Scroll in
+        # pixels rather than Tk units, which are very small on high-DPI PCs.
+        pixels = min(90.0, max(4.0, abs(delta) * 0.45))
+        pos = canvas.yview()[0] * scrollable
+        pos -= pixels if delta > 0 else -pixels
+        canvas.yview_moveto(max(0.0, min(1.0, pos / scrollable)))
         return "break"
+
+    def cloud_manage_popup(self):
+        """Manage provider credentials without orphaned StringVar entry callbacks."""
+        c = self.palette()
+        it = self.ui_language.get() == "it"
+        t = (lambda a, b: a if it else b)
+        dlg = ctk.CTkToplevel(self.root)
+        dlg.title(t("Provider AI e chiavi API", "AI providers and API keys"))
+        dlg.geometry("740x600")
+        dlg.minsize(630, 470)
+        dlg.transient(self.root)
+        dlg.grid_columnconfigure(0, weight=1)
+        dlg.grid_rowconfigure(0, weight=1)
+
+        # This dialog intentionally does not bind CTkEntry widgets to Tk
+        # StringVar objects: callback traces may outlive destroyed widgets.
+        outer = ctk.CTkFrame(dlg, fg_color=c["bg"], corner_radius=0)
+        outer.grid(row=0, column=0, sticky="nsew", padx=15, pady=12)
+        outer.grid_columnconfigure(0, weight=1)
+        outer.grid_rowconfigure(1, weight=1)
+
+        form = ctk.CTkFrame(outer, corner_radius=12)
+        form.grid(row=0, column=0, sticky="ew", pady=(0, 12))
+        form.grid_columnconfigure(0, weight=1)
+        self.text(form, t("Aggiungi una chiave API", "Add an API key"), 17, True).grid(
+            row=0, column=0, sticky="w", padx=16, pady=(14, 3))
+        self.text(form, t("Le chiavi vengono conservate nell'archivio credenziali di Windows.",
+                          "Keys are stored in Windows Credential Manager."), 11, muted=True).grid(
+            row=1, column=0, sticky="w", padx=16, pady=(0, 9))
+
+        self.text(form, t("Provider", "Provider"), 12, True).grid(
+            row=2, column=0, sticky="w", padx=16)
+        provider_box = ctk.CTkOptionMenu(form, values=list(MODELS))
+        provider_box.grid(row=3, column=0, sticky="ew", padx=16, pady=(4, 10))
+        if self.cloud_provider.get() in MODELS:
+            provider_box.set(self.cloud_provider.get())
+
+        self.text(form, t("Nome identificativo", "Key label"), 12, True).grid(
+            row=4, column=0, sticky="w", padx=16)
+        label_entry = ctk.CTkEntry(form, height=35)
+        label_entry.grid(row=5, column=0, sticky="ew", padx=16, pady=(4, 10))
+
+        self.text(form, t("Chiave API segreta", "Secret API key"), 12, True).grid(
+            row=6, column=0, sticky="w", padx=16)
+        secret_entry = ctk.CTkEntry(form, height=35, show="•")
+        secret_entry.grid(row=7, column=0, sticky="ew", padx=16, pady=(4, 10))
+
+        listing_box = ctk.CTkFrame(outer, corner_radius=12)
+        listing_box.grid(row=1, column=0, sticky="nsew", pady=(0, 4))
+        listing_box.grid_columnconfigure(0, weight=1)
+        listing_box.grid_rowconfigure(1, weight=1)
+        self.text(listing_box, t("Chiavi salvate", "Saved keys"), 15, True).grid(
+            row=0, column=0, sticky="w", padx=14, pady=(12, 5))
+        listing = ctk.CTkScrollableFrame(listing_box, fg_color="transparent")
+        listing.grid(row=1, column=0, sticky="nsew", padx=8, pady=(0, 10))
+
+        def reload():
+            for widget in listing.winfo_children():
+                widget.destroy()
+            if not self.vault.items:
+                self.text(listing, t("Nessuna chiave salvata", "No saved keys"),
+                          11, muted=True).pack(anchor="w", padx=8, pady=10)
+                return
+            for entry in list(self.vault.items):
+                row = ctk.CTkFrame(listing, fg_color="transparent")
+                row.pack(fill="x", pady=3)
+                row.grid_columnconfigure(0, weight=1)
+                state = t("Attiva", "Enabled") if entry['enabled'] else t("Disattivata", "Disabled")
+                self.text(row, f"{entry['provider']} · {entry['name']} · {state}", 11).grid(
+                    row=0, column=0, sticky="w", padx=(5, 6))
+                def action(fn, item=entry):
+                    try:
+                        fn(item)
+                    except Exception:
+                        messagebox.showerror(APP, t("Operazione sulle credenziali non riuscita",
+                                                    "Credential operation failed"), parent=dlg)
+                    reload()
+                def use(item=entry):
+                    self.cloud_provider.set(item['provider'])
+                    self.cloud_key_id.set(item['id'])
+                    self.cloud_model.set(MODELS[item['provider']][0])
+                    self.save_config()
+                    dlg.destroy()
+                    self.root.after_idle(self.rebuild)
+                buttons = [
+                    (t("Usa", "Use"), use),
+                    ("On/Off", lambda item=entry: action(lambda x: self.vault.edit(
+                        x['id'], enabled=not x['enabled']), item)),
+                    (t("Modifica", "Edit"), lambda item=entry: edit_key(item)),
+                    ("Test", lambda item=entry: test_key(item)),
+                    (t("Elimina", "Delete"), lambda item=entry: remove_key(item)),
+                ]
+                for i, (caption, command) in enumerate(buttons, 1):
+                    self.secondary_button(row, caption, command,
+                                          57 if i != 3 else 67).grid(row=0, column=i, padx=2)
+
+        def edit_key(item):
+            from tkinter import simpledialog
+            new_name = simpledialog.askstring(APP, t("Nuovo nome (vuoto = invariato)",
+                                                    "New label (blank = unchanged)"), parent=dlg)
+            if new_name:
+                self.vault.edit(item['id'], name=new_name)
+            new_secret = simpledialog.askstring(APP, t("Sostituisci chiave (vuoto = invariato)",
+                                                      "Replace key (blank = unchanged)"),
+                                                parent=dlg, show="*")
+            if new_secret:
+                self.vault.edit(item['id'], secret=new_secret)
+            reload()
+
+        def remove_key(item):
+            if messagebox.askyesno(APP, t("Eliminare definitivamente questa chiave?",
+                                         "Permanently delete this key?"), parent=dlg):
+                self.vault.delete(item['id'])
+                if self.cloud_key_id.get() == item['id']:
+                    self.cloud_key_id.set("")
+                reload()
+
+        def test_key(item):
+            key = self.vault.get_secret(item['id'])
+            if not key:
+                messagebox.showwarning(APP, t("Credenziale non accessibile", "Credential inaccessible"),
+                                       parent=dlg)
+                return
+            def background():
+                try:
+                    verify_key(item['provider'], key)
+                    result = t("Autenticazione riuscita. Quota non verificata.",
+                               "Authenticated. Quota not checked.")
+                except ProviderError as err:
+                    result = f"Test failed: {err.category}"
+                except Exception:
+                    result = t("Test di connessione non riuscito", "Connection test failed")
+                def notify():
+                    if dlg.winfo_exists():
+                        messagebox.showinfo(APP, result, parent=dlg)
+                try:
+                    self.root.after(0, notify)
+                except RuntimeError:
+                    pass
+            threading.Thread(target=background, daemon=True).start()
+
+        def add_key():
+            provider = provider_box.get()
+            name = label_entry.get().strip()
+            secret = secret_entry.get().strip()
+            if not name or not secret:
+                messagebox.showwarning(APP, t("Inserisci nome e chiave API.",
+                                             "Enter a label and API key."), parent=dlg)
+                return
+            try:
+                self.vault.add(provider, name, secret)
+            except Exception:
+                messagebox.showerror(APP, t("Salvataggio nel gestore credenziali fallito",
+                                            "Could not save to Credential Manager"), parent=dlg)
+                return
+            # Clear entry widgets directly, without StringVar traces.
+            secret_entry.delete(0, "end")
+            label_entry.delete(0, "end")
+            reload()
+
+        ctk.CTkButton(form, text=t("+ Aggiungi chiave", "+ Add key"),
+                      command=add_key).grid(row=8, column=0, sticky="ew",
+                                            padx=16, pady=(3, 15))
+        reload()
+        dlg.after(100, dlg.lift)
+
+    def cloud_change_provider(self,value):
+        self.cloud_provider.set(value)
+        self.cloud_model.set(MODELS[value][0])
+        self.save_config()
+        self.refresh_cloud_options()
+
+    def queue_editor(self):
+        """Resizable dark-mode-compatible per-recording names and links."""
+        dlg=ctk.CTkToplevel(self.root)
+        dlg.title("Registrazioni multiple / Batch recordings")
+        dlg.geometry("720x580")
+        dlg.minsize(560,430)
+        dlg.transient(self.root)
+        body=ctk.CTkScrollableFrame(dlg)
+        body.pack(fill="both",expand=True,padx=14,pady=10)
+        widgets=[]
+        def draw():
+            for w in body.winfo_children():w.destroy()
+            widgets.clear()
+            self.text(body,"Registrazioni / Recordings",18,True).pack(anchor="w",pady=8)
+            for n,item in enumerate(self.pending_sources):
+                card=ctk.CTkFrame(body)
+                card.pack(fill="x",pady=6)
+                self.text(card,f"#{n+1}",12,True).pack(anchor="w",padx=10,pady=4)
+                url=ctk.StringVar(value=item['source'])
+                title=ctk.StringVar(value=item.get('name') or '')
+                ctk.CTkEntry(card,textvariable=url,placeholder_text="URL / file path").pack(fill="x",padx=10,pady=3)
+                ctk.CTkEntry(card,textvariable=title,placeholder_text="Custom name (optional) / Nome opzionale").pack(fill="x",padx=10,pady=3)
+                self.secondary_button(card,"✕  Remove",lambda i=n:remove(i),115).pack(anchor="e",padx=10,pady=5)
+                widgets.append((url,title))
+            self.secondary_button(body,"+  Add recording",add,200).pack(fill="x",pady=8)
+            self.secondary_button(body,"Save queue / Salva coda",save,220).pack(fill="x",pady=5)
+        def snapshot():
+            self.pending_sources=[{'source':u.get().strip(),'name':t.get().strip() or None} for u,t in widgets if u.get().strip()]
+        def add():snapshot();self.pending_sources.append({'source':'','name':None});draw()
+        def remove(i):snapshot();self.pending_sources.pop(i);draw()
+        def save():snapshot();self.refresh_queue();dlg.destroy()
+        def close():save()
+        dlg.protocol('WM_DELETE_WINDOW',close)
+        draw()
 
     def rebuild(self):
         c = self.palette()
         self.apply_theme()
+        self._last_palette = c.copy()
 
         # CTkScrollableFrame owns a separate parent container and canvas.
         # Destroying/recreating it on each setting change left stale widgets
@@ -313,11 +533,13 @@ class App:
         self.text(branding, self.t("tagline"), 11, muted=True).pack(anchor="w")
         tools = ctk.CTkFrame(header, fg_color="transparent")
         tools.pack(side="right")
-        self.secondary_button(tools, "EN" if self.ui_language.get()=="it" else "IT",
-                              self.toggle_language, width=40).pack(side="left", padx=(0, 6))
+        self.language_button = self.secondary_button(tools, "EN" if self.ui_language.get()=="it" else "IT",
+                              self.toggle_language, width=40)
+        self.language_button.pack(side="left", padx=(0, 6))
         theme_labels = {"auto":"◐", "light":"☀", "dark":"☾"}
-        self.secondary_button(tools, theme_labels[self.ui_theme.get()],
-                              self.cycle_theme, width=42).pack(side="left")
+        self.theme_button = self.secondary_button(tools, theme_labels[self.ui_theme.get()],
+                              self.cycle_theme, width=42)
+        self.theme_button.pack(side="left")
 
         source_card = self.panel(self.main)
         self.text(source_card, self.t("step_source"), 14, True).pack(anchor="w", padx=15, pady=(12, 2))
@@ -326,7 +548,7 @@ class App:
         queue_controls.pack(fill="x", padx=15, pady=(8, 0))
         self.text(queue_controls, self.t("queue"), 11, True).pack(side="left", padx=(0, 8))
         self.secondary_button(queue_controls, self.t("add_files"), self.enqueue_files, 66).pack(side="left", padx=(0, 5))
-        self.secondary_button(queue_controls, self.t("add_link"), self.enqueue_link, 65).pack(side="left", padx=(0, 5))
+        self.secondary_button(queue_controls, self.t("add_link"), self.queue_editor, 85).pack(side="left", padx=(0, 5))
         self.secondary_button(queue_controls, self.t("clear_queue"), self.clear_queue, 76).pack(side="left")
         self.queue_label = self.text(source_card, "", 10, muted=True, wraplength=580, justify="left")
         self.queue_label.pack(anchor="w", padx=15, pady=(4, 2))
@@ -373,39 +595,65 @@ class App:
         mode_row.pack(fill="x", padx=15, pady=(0, 12))
         self.text(mode_row, self.t("backend"), 11).pack(anchor="w", pady=(0, 4))
         engine_labels = {self.t("local_engine"): "local", self.t("cloud_engine"): "cloud"}
-        mode_combo = ctk.CTkOptionMenu(mode_row, values=list(engine_labels), height=32,
+        self.engine_combo = ctk.CTkOptionMenu(mode_row, values=list(engine_labels), height=32,
             fg_color=c["inset"], button_color=c["inset"], text_color=c["fg"],
             dropdown_fg_color=c["panel"], dropdown_text_color=c["fg"],
-            command=lambda value: self.set_engine(engine_labels[value]))
-        mode_combo.pack(fill="x")
-        mode_combo.set(self.t("cloud_engine") if self.engine.get() == "cloud" else self.t("local_engine"))
+            command=lambda value: self.set_engine("cloud" if value == self.t("cloud_engine") else "local"))
+        self.engine_combo.pack(fill="x")
+        self.engine_combo.set(self.t("cloud_engine") if self.engine.get() == "cloud" else self.t("local_engine"))
+        # Cloud fields are created once and toggled via pack/pack_forget.
+        self.cloud_fields = ctk.CTkFrame(mode_row, fg_color="transparent")
+        self.cloud_title = self.text(self.cloud_fields, "Provider AI" if self.ui_language.get()=="it" else "AI provider", 10)
+        self.cloud_title.pack(anchor="w", pady=(8, 3))
+        self.cloud_provider_combo = ctk.CTkOptionMenu(
+            self.cloud_fields, values=list(MODELS), command=self.cloud_change_provider)
+        self.cloud_provider_combo.pack(fill="x")
+        self.cloud_provider_combo.set(self.cloud_provider.get())
+        self.cloud_active_label = self.text(self.cloud_fields, "", 10, muted=True)
+        self.cloud_active_label.pack(anchor="w", pady=3)
+        self.cloud_manage_btn = self.secondary_button(
+            self.cloud_fields, "Gestisci chiavi API" if self.ui_language.get()=="it" else "Manage API keys",
+            self.cloud_manage_popup, 230)
+        self.cloud_manage_btn.pack(anchor="w", pady=5)
+        self.cloud_model_combo = ctk.CTkOptionMenu(
+            self.cloud_fields, values=list(MODELS[self.cloud_provider.get()]),
+            command=self.change_cloud_model)
+        self.cloud_model_combo.pack(fill="x", pady=5)
+        self.cloud_warning_label = self.text(self.cloud_fields,
+            "Le richieste cloud possono essere a pagamento. Serve consenso prima di ogni coda." if self.ui_language.get()=="it" else
+            "Cloud requests may incur charges. Consent required per batch.", 10, muted=True, wraplength=570)
+        self.cloud_warning_label.pack(anchor="w")
+        self.refresh_cloud_options()
         if self.engine.get() == "cloud":
-            self.text(mode_row, self.t("api_key"), 10).pack(anchor="w", pady=(7, 3))
-            ctk.CTkEntry(mode_row, textvariable=self.api_key, show="•", height=32).pack(fill="x")
-            self.text(mode_row, self.t("cloud_warning"), 10, muted=True, wraplength=590, justify="left").pack(anchor="w", pady=(7, 0))
+            self.cloud_fields.pack(fill="x")
 
         advanced = self.panel(self.main)
         arrow = "⌄" if self.advanced_open.get() else "›"
-        self.secondary_button(advanced, arrow + "  " + self.t("advanced"),
-                              self.toggle_advanced, width=245).pack(anchor="w", padx=12, pady=9)
+        self.advanced_button = self.secondary_button(
+            advanced, arrow + "  " + self.t("advanced"), self.toggle_advanced, width=245)
+        self.advanced_button.pack(anchor="w", padx=12, pady=9)
+        # Keep advanced controls alive so toggling cannot steal entry focus.
+        self.advanced_content = ctk.CTkFrame(advanced, fg_color="transparent")
+        advanced_body = self.advanced_content
+        self.text(advanced_body, self.t("transcripts"), 11).pack(anchor="w", padx=15)
+        self.choose_input(advanced_body, self.transcripts_dir, lambda: self.choose_dir(self.transcripts_dir), self.t("choose"))
+        self.text(advanced_body, self.t("videos"), 11).pack(anchor="w", padx=15, pady=(9, 0))
+        self.choose_input(advanced_body, self.videos_dir, lambda: self.choose_dir(self.videos_dir), self.t("choose"))
+        ctk.CTkCheckBox(advanced_body, text=self.t("keep"), variable=self.keep_video,
+            command=self.save_config, checkbox_width=17, checkbox_height=17,
+            font=("Segoe UI", 11), text_color=c["fg"],
+            fg_color=c["accent"]).pack(anchor="w", padx=15, pady=(11, 9))
+        actions = ctk.CTkFrame(advanced_body, fg_color="transparent")
+        actions.pack(anchor="w", padx=15, pady=(0, 12))
+        self.secondary_button(actions, self.t("open"),
+            lambda: self.open_folder(Path(self.transcripts_dir.get())), 148).pack(side="left", padx=(0, 7))
+        self.secondary_button(actions, self.t("logs"),
+            lambda: self.open_folder(CONFIG_DIR), 140).pack(side="left")
+        self.text(advanced_body, self.t("updates") + " · v" + VERSION, 11, True).pack(anchor="w", padx=15, pady=(12, 0))
+        self.secondary_button(advanced_body, self.t("check_update"), self.check_updates, 180).pack(anchor="w", padx=15, pady=7)
+        self.text(advanced_body, "Official: " + OFFICIAL_REPO, 10, muted=True).pack(anchor="w", padx=15, pady=(1, 12))
         if self.advanced_open.get():
-            self.text(advanced, self.t("transcripts"), 11).pack(anchor="w", padx=15)
-            self.choose_input(advanced, self.transcripts_dir, lambda: self.choose_dir(self.transcripts_dir), self.t("choose"))
-            self.text(advanced, self.t("videos"), 11).pack(anchor="w", padx=15, pady=(9,0))
-            self.choose_input(advanced, self.videos_dir, lambda: self.choose_dir(self.videos_dir), self.t("choose"))
-            ctk.CTkCheckBox(advanced, text=self.t("keep"), variable=self.keep_video,
-                command=self.save_config, checkbox_width=17, checkbox_height=17,
-                font=("Segoe UI", 11), text_color=c["fg"],
-                fg_color=c["accent"]).pack(anchor="w", padx=15, pady=(11,9))
-            actions = ctk.CTkFrame(advanced, fg_color="transparent")
-            actions.pack(anchor="w", padx=15, pady=(0,12))
-            self.secondary_button(actions, self.t("open"),
-                lambda: self.open_folder(Path(self.transcripts_dir.get())), 148).pack(side="left", padx=(0,7))
-            self.secondary_button(actions, self.t("logs"),
-                lambda: self.open_folder(CONFIG_DIR), 140).pack(side="left")
-            self.text(advanced, self.t("updates") + " · v" + VERSION, 11, True).pack(anchor="w", padx=15, pady=(12,0))
-            self.choose_input(advanced, self.update_repo, self.check_updates, self.t("check_update"))
-            self.text(advanced, self.t("update_repo"), 10, muted=True).pack(anchor="w", padx=15, pady=(1,12))
+            self.advanced_content.pack(fill="x")
 
         run_card = self.panel(self.main)
         self.text(run_card, self.t("step_run"), 14, True).pack(anchor="w", padx=15, pady=(11,8))
@@ -435,20 +683,20 @@ class App:
 
     def refresh_queue(self):
         if hasattr(self, "queue_label") and self.queue_label.winfo_exists():
-            names = [Path(x).name if not x.startswith(("https://", "http://")) else "Webex / URL" for x in self.pending_sources[:3]]
+            names = [Path(x["source"]).name if not x["source"].startswith(("https://", "http://")) else "Webex / URL" for x in self.pending_sources[:3]]
             label = f"{len(self.pending_sources)} · " + ", ".join(names) if names else self.t("queue_empty")
             self.queue_label.configure(text=label)
 
     def enqueue_files(self):
         files = filedialog.askopenfilenames(filetypes=[("Media", "*.mp4 *.mkv *.webm *.mov *.mp3 *.m4a *.wav *.flac *.aac")])
-        self.pending_sources.extend(files)
+        self.pending_sources.extend({"source":x,"name":None} for x in files)
         self.refresh_queue()
 
     def enqueue_link(self):
         from tkinter.simpledialog import askstring
         url = askstring(APP, self.t("link_prompt"), parent=self.root)
         if url and url.strip().startswith(("https://", "http://")):
-            self.pending_sources.append(url.strip())
+            self.pending_sources.append({"source":url.strip(),"name":None})
             self.refresh_queue()
 
     def clear_queue(self):
@@ -458,11 +706,34 @@ class App:
 
     def set_engine(self, value):
         self.engine.set(value)
-        self.update_preferences()
+        if value == "cloud":
+            self.cloud_fields.pack(fill="x")
+        else:
+            self.cloud_fields.pack_forget()
+        self.save_config()
+
+    def change_cloud_model(self, value):
+        self.cloud_model.set(value)
+        self.refresh_cloud_options()
+        self.save_config()
+
+    def refresh_cloud_options(self):
+        if not hasattr(self, "cloud_model_combo"):
+            return
+        models = list(MODELS.get(self.cloud_provider.get(), ()))
+        if not models:
+            return
+        if self.cloud_model.get() not in models:
+            self.cloud_model.set(models[0])
+        self.cloud_model_combo.configure(values=models)
+        self.cloud_model_combo.set(self.cloud_model.get())
+        self.cloud_provider_combo.set(self.cloud_provider.get())
+        self.cloud_active_label.configure(
+            text=f"Active: {self.cloud_provider.get()} / {self.cloud_model.get()}")
 
     def check_updates(self):
         self.save_config()
-        repo = self.update_repo.get().strip()
+        repo = OFFICIAL_REPO
         def task():
             try:
                 tag, asset = fetch_release(repo)
@@ -488,8 +759,14 @@ class App:
         threading.Thread(target=task, daemon=True).start()
 
     def toggle_advanced(self):
-        self.advanced_open.set(not self.advanced_open.get())
-        self.rebuild()
+        is_open = not self.advanced_open.get()
+        self.advanced_open.set(is_open)
+        if is_open:
+            self.advanced_content.pack(fill="x")
+        else:
+            self.advanced_content.pack_forget()
+        self.advanced_button.configure(
+            text=("⌄" if is_open else "›") + "  " + self.t("advanced"))
 
     def change_quality(self, index):
         self.model.set(QUALITY_CHOICES[index])
@@ -518,7 +795,7 @@ class App:
             updated = windows_dark_mode()
             if updated != self._system_dark:
                 self._system_dark = updated
-                self.rebuild()
+                self.apply_live_theme()
         self.root.after(2500, self.watch_system_theme)
 
     def animate_status(self):
@@ -530,9 +807,89 @@ class App:
             self.status_label.configure(text=self.status.get())
         self.root.after(350, self.animate_status)
 
+    def _all_widgets(self, parent):
+        for child in parent.winfo_children():
+            yield child
+            yield from self._all_widgets(child)
+
+    def refresh_translations(self):
+        """Update visible labels in place, without destroying user inputs."""
+        if not self.main or not self.main.winfo_exists():
+            return
+        old_language = self._rendered_language
+        if old_language == self.ui_language.get():
+            return
+        old_dict, new_dict = I18N[old_language], I18N[self.ui_language.get()]
+        translations = {str(value): str(new_dict[key])
+                        for key, value in old_dict.items() if key in new_dict}
+        prefixes = ("▶  ", "■  ", "⌄  ", "›  ")
+        for widget in self._all_widgets(self.main):
+            if not isinstance(widget, (ctk.CTkLabel, ctk.CTkButton, ctk.CTkCheckBox)):
+                continue
+            try:
+                old_text = widget.cget("text")
+                new_text = translations.get(old_text)
+                if new_text is None:
+                    for prefix in prefixes:
+                        if old_text.startswith(prefix) and old_text[len(prefix):] in translations:
+                            new_text = prefix + translations[old_text[len(prefix):]]
+                            break
+                if new_text is None and isinstance(old_text, str):
+                    for prefix in ("",):
+                        key = "updates"
+                        if old_text == old_dict[key] + " · v" + VERSION:
+                            new_text = new_dict[key] + " · v" + VERSION
+                if new_text is not None:
+                    widget.configure(text=new_text)
+            except (tk.TclError, ValueError, AttributeError):
+                pass
+        self.language_button.configure(text="EN" if self.ui_language.get() == "it" else "IT")
+        self.advanced_button.configure(text=("⌄" if self.advanced_open.get() else "›") + "  " + self.t("advanced"))
+        self.quality_label_map = {self.t("quality_" + key): key for key in QUALITY_CHOICES}
+        self.quality_combo.configure(values=list(self.quality_label_map))
+        self.quality_combo.set(self.t("quality_" + self.model.get()))
+        self.language_label_map = {self.t("spoken_" + key): key for key in ("auto", "it", "en")}
+        self.speech_combo.configure(values=list(self.language_label_map))
+        self.speech_combo.set(self.t("spoken_" + self.spoken.get()))
+        self.engine_combo.configure(values=[self.t("local_engine"), self.t("cloud_engine")])
+        self.engine_combo.set(self.t("cloud_engine") if self.engine.get() == "cloud" else self.t("local_engine"))
+        self.cloud_title.configure(text="Provider AI" if self.ui_language.get() == "it" else "AI provider")
+        self.cloud_manage_btn.configure(text="Gestisci chiavi API" if self.ui_language.get() == "it" else "Manage API keys")
+        self.cloud_warning_label.configure(text=(
+            "Le richieste cloud possono essere a pagamento. Serve consenso prima di ogni coda."
+            if self.ui_language.get() == "it" else
+            "Cloud requests may incur charges. Consent required per batch."))
+        self.refresh_queue()
+        self._rendered_language = self.ui_language.get()
+
+    def apply_live_theme(self):
+        """Repaint existing CTk controls; preserve their identity and focus."""
+        old = self._last_palette or self.palette()
+        new = self.palette()
+        self.apply_theme()
+        color_fields = ("fg_color", "bg_color", "text_color", "border_color",
+                        "hover_color", "button_color", "button_hover_color",
+                        "dropdown_fg_color", "dropdown_text_color", "progress_color",
+                        "scrollbar_button_color", "scrollbar_button_hover_color")
+        for widget in (self.scroll_area, *self._all_widgets(self.main)):
+            for field in color_fields:
+                try:
+                    old_value = widget.cget(field)
+                    if isinstance(old_value, str):
+                        for role, color in old.items():
+                            if old_value.lower() == color.lower():
+                                widget.configure(**{field: new[role]})
+                                break
+                except (tk.TclError, ValueError, AttributeError, TypeError):
+                    pass
+        self._last_palette = new.copy()
+        self.theme_button.configure(text={"auto": "◐", "light": "☀", "dark": "☾"}[self.ui_theme.get()])
+
     def update_preferences(self, _event=None):
         self.save_config()
-        self.rebuild()
+        self.apply_live_theme()
+        self.refresh_translations()
+
 
     def choose_dir(self, var):
         chosen = filedialog.askdirectory(initialdir=var.get(), title=self.t("select_folder"))
@@ -627,17 +984,21 @@ class App:
         if self.running:
             return
         source = self.source.get().strip().strip('"')
-        sources = ([source] if source else []) + self.pending_sources[:]
-        sources = list(dict.fromkeys(sources))
+        sources = ([{"source":source,"name":None}] if source else []) + self.pending_sources[:]
+        sources = list({item["source"]:item for item in sources}.values())
         if not sources:
             messagebox.showwarning(APP, self.t("missing"))
             return
-        if any(not x.startswith(("http://", "https://")) and not Path(x).is_file() for x in sources):
+        if any(not x.startswith(("http://", "https://")) and not Path(x).is_file() for x in (item["source"] for item in sources)):
             messagebox.showerror(APP, self.t("notfound"))
             return
         if self.engine.get() == "cloud":
-            if not self.api_key.get().strip():
-                messagebox.showwarning(APP, self.t("cloud_key_missing"))
+            chosen = next((entry for entry in self.vault.items
+                if entry.get("id") == self.cloud_key_id.get()
+                and entry.get("enabled")
+                and entry.get("provider") == self.cloud_provider.get()), None)
+            if chosen is None or not self.vault.get_secret(self.cloud_key_id.get()):
+                messagebox.showwarning(APP, "Select an enabled API key for this provider")
                 return
             if not messagebox.askyesno(APP, self.t("cloud_confirm")):
                 return
@@ -665,7 +1026,8 @@ class App:
         self.progress.set(0)
         self.status.set(self.t("preparing"))
         self.update_buttons()
-        job = {"source": source, "name": requested_name, "model": model, "spoken": self.spoken.get(), "keep": self.keep_video.get(), "transcripts": transcript_dir, "videos": video_dir, "engine": self.engine.get(), "api_key": self.api_key.get() if self.engine.get() == "cloud" else None}
+        job = {"source": source, "name": requested_name, "model": model, "spoken": self.spoken.get(), "keep": self.keep_video.get(), "transcripts": transcript_dir, "videos": video_dir, "engine": self.engine.get(), "cloud_provider":self.cloud_provider.get(),"cloud_model":self.cloud_model.get(),
+               "cloud_key_id":self.cloud_key_id.get()}
         self.pending_sources.clear()
         self.refresh_queue()
         threading.Thread(target=self.worker_batch, args=(job, sources), daemon=True).start()
@@ -888,8 +1250,10 @@ class App:
                 self.send("cancelled")
                 return
             current = dict(job)
-            current["source"] = source
-            if job["name"] and len(sources) > 1:
+            current["source"] = source["source"]
+            if source.get("name"):
+                current["name"] = clean_name(source["name"])
+            elif job["name"] and len(sources) > 1:
                 current["name"] = f"{job['name']}_{index:02}"
             try:
                 self.process_one(current)
@@ -936,10 +1300,18 @@ class App:
                 base, span = (35, 65) if network_media else (0, 100)
                 self.send("progress", base + span * p / 100)
             try:
-                lines = cloud_transcribe(media, job["api_key"], job["spoken"],
-                                         progress, self.stop_event.is_set)
+                secret = self.vault.get_secret(job["cloud_key_id"])
+                if not secret:
+                    raise ProviderError("credential_missing")
+                lines = transcribe_long(media, provider=job["cloud_provider"],
+                    model=job["cloud_model"],secret=secret,language=job["spoken"],
+                    output_dir=folder,job_id=job["name"],key_id=job["cloud_key_id"],
+                    progress=progress,cancelled=self.stop_event.is_set)
             except InterruptedError:
                 raise JobCancelled()
+            except ProviderError as err:
+                self.log("CLOUD_"+err.category.upper())
+                raise RuntimeError("Cloud provider error: "+err.category) from None
             self.check_cancel()
             txt.write_text("\n".join(lines) + "\n", encoding="utf-8")
             md.write_text("# " + job["name"] + "\n\n> " + self.t("cloud_result") + "\n\n" +
