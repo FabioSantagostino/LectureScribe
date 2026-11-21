@@ -45,7 +45,8 @@ jobs:
           Copy-Item LICENSE dist/LICENSE
           Copy-Item browser-extension dist/browser-extension -Recurse
           New-Item -ItemType Directory dist/browser-extension/firefox
-          Copy-Item browser-extension/background.js,browser-extension/bootstrap.js dist/browser-extension/firefox
+          Copy-Item browser-extension/background.js,browser-extension/bootstrap.js,browser-extension/bridge.css dist/browser-extension/firefox
+          Copy-Item browser-extension/icons dist/browser-extension/firefox/icons -Recurse
           Move-Item dist/browser-extension/manifest.firefox.json dist/browser-extension/firefox/manifest.json
           Compress-Archive -Path dist/ScribeLane.exe,dist/README.md,dist/LICENSE,dist/browser-extension -DestinationPath ScribeLane-Windows-x64.zip -Force
           Add-Type -AssemblyName System.IO.Compression.FileSystem

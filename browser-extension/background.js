@@ -14,18 +14,20 @@ function webexURL(value) {
 }
 
 api.runtime.onMessage.addListener((message, sender, respond) => {
-  if (message.type !== "capture" || sender.frameId !== 0 || sender.tab?.id == null) return;
-  const target = webexURL(message.target);
-  if (!target?.pathname.toLowerCase().split("/").includes("playback")) return;
+  if (sender.frameId !== 0 || sender.tab?.id == null) return;
   const bridge = sender.url;
   if (!/^http:\/\/127\.0\.0\.1:\d{1,5}\/scribelane\/[A-Za-z0-9_-]{43}$/.test(bridge)) return;
+  if (message.type === "ready") {
+    fetch(bridge + "/ready", { method: "POST" })
+      .then(response => respond(response.ok), () => respond(false));
+    return true;
+  }
+  if (message.type !== "capture") return;
+  const target = webexURL(message.target);
+  if (!target?.pathname.toLowerCase().split("/").includes("playback")) return;
   const key = keyFor(sender.tab.id);
-  (async () => {
-    await api.storage.session.set({ [key]: { bridge, expiry: Date.now() + 200000 } });
-    const response = await fetch(bridge + "/ready", { method: "POST" });
-    if (!response.ok) await api.storage.session.remove(key);
-    respond(response.ok);
-  })().catch(() => respond(false));
+  api.storage.session.set({ [key]: { bridge, expiry: Date.now() + 200000 } })
+    .then(() => respond(true), () => respond(false));
   return true;
 });
 

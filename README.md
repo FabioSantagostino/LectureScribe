@@ -35,12 +35,12 @@ Se il tuo browser è basato su Chromium e non compare per nome nelle impostazion
 | Brave | `brave://extensions` |
 | Altri browser Chromium | Apri la pagina **Estensioni** dal menu del browser |
 
-In **Firefox**, apri `about:debugging#/runtime/this-firefox`, seleziona **Carica componente aggiuntivo temporaneo** e apri `browser-extension/firefox/manifest.json`. Firefox rimuove questa installazione temporanea quando si chiude. Ricaricala dopo il riavvio. Se usi il repository sorgente, copia `browser-extension` in una cartella distinta e sostituisci `manifest.json` con `manifest.firefox.json` rinominato.
+In **Firefox** (versione 140 o successiva per l’estensione 1.1.0), apri `about:debugging#/runtime/this-firefox`, seleziona **Carica componente aggiuntivo temporaneo** e apri `browser-extension/firefox/manifest.json`. Firefox rimuove questa installazione temporanea quando si chiude. Ricaricala dopo il riavvio. Se usi il repository sorgente, copia `browser-extension` in una cartella distinta e sostituisci `manifest.json` con `manifest.firefox.json` rinominato.
 
 ### Avvia la registrazione
 
 1. Dopo aver installato l’estensione, riprova il link Webex originale in ScribeLane.
-2. L'estensione accompagna la nuova scheda al player nel browser predefinito di Windows. Se Webex richiede l'accesso, completalo sul sito nella sessione del tuo browser. Premi **Play** se il video rimane in pausa.
+2. Quando si apre la pagina locale, scegli **Apri Webex e invia il link all’app**. Se Webex richiede l'accesso, completalo sul sito nella sessione del tuo browser. Premi **Play** se il video rimane in pausa.
 3. Quando il player riceve la playlist HLS, ScribeLane la scarica con yt-dlp e avvia la trascrizione. Per una coda con più registrazioni, ripeti la riproduzione nelle schede che la richiedono.
 
 ### Cosa fa l'estensione

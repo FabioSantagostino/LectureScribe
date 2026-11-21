@@ -1,0 +1,37 @@
+.scribelane-bridge {
+  box-sizing: border-box;
+  width: min(680px, calc(100% - 48px));
+  margin: 16vh auto 0;
+  padding: clamp(24px, 6vw, 56px);
+  border: 1px solid #cadbd9;
+  border-radius: 24px;
+  background: #f5faf9;
+  color: #172b2e;
+  font: 17px/1.6 system-ui, sans-serif;
+}
+
+.scribelane-bridge h1 {
+  margin: 0 0 14px;
+  font: 700 clamp(29px, 5vw, 42px)/1.12 system-ui, sans-serif;
+  letter-spacing: -.035em;
+}
+
+.scribelane-bridge p {
+  margin: 0 0 26px;
+  color: #42575b;
+}
+
+.scribelane-bridge #playback {
+  display: inline-block;
+  padding: 12px 18px;
+  border-radius: 10px;
+  background: #145f5d;
+  color: #fff;
+  text-decoration: none;
+  font-weight: 650;
+}
+
+.scribelane-bridge #playback:focus-visible {
+  outline: 3px solid #145f5d;
+  outline-offset: 4px;
+}
