@@ -9,12 +9,12 @@ from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
 from yt_dlp.utils import DownloadError
-from lecturescribe_webex import capture_playlist, is_webex_playback
+from scribelane_webex import capture_playlist, is_webex_playback
 
 PLAYBACK = "https://campus.webex.com/recording/playback/example"
 PLAYLIST = "https://media.webex.com/recording/hls.m3u8?sig=a%2Fb&part=1"
-source = Path(__file__).resolve().parents[1] / "lecturescribe.pyw"
-loader = importlib.machinery.SourceFileLoader("lecturescribe_gui", str(source))
+source = Path(__file__).resolve().parents[1] / "scribelane.pyw"
+loader = importlib.machinery.SourceFileLoader("scribelane_gui", str(source))
 spec = importlib.util.spec_from_loader(loader.name, loader)
 gui = importlib.util.module_from_spec(spec)
 loader.exec_module(gui)
@@ -51,7 +51,7 @@ class WebexTests(unittest.TestCase):
             return True
 
         callback = Mock()
-        with patch("lecturescribe_webex.open_browser", side_effect=extension):
+        with patch("scribelane_webex.open_browser", side_effect=extension):
             self.assertEqual(capture_playlist(PLAYBACK, check_cancel=Mock(), on_playback=callback), PLAYLIST)
         callback.assert_called_once()
 

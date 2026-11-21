@@ -5,8 +5,8 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from lecturescribe_openvino import model_directory, MODEL_MAP, device_list
-import lecturescribe_openvino as backend
+from scribelane_openvino import model_directory, MODEL_MAP, device_list
+import scribelane_openvino as backend
 
 
 class OpenVINOTests(unittest.TestCase):

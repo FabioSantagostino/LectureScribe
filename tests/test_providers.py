@@ -2,8 +2,8 @@ import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
-from lecturescribe_credentials import Vault
-from lecturescribe_providers import categorize, stitch, ProviderError, transcribe_long
+from scribelane_credentials import Vault
+from scribelane_providers import categorize, stitch, ProviderError, transcribe_long
 
 class FakeKeyring:
     def __init__(self): self.store={}
@@ -44,7 +44,7 @@ class Services(unittest.TestCase):
             def mock_transcribe(*args,**kwargs):
                 count['n']+=1
                 return 'text'
-            with patch('lecturescribe_providers.chunks',side_effect=mock_chunks), patch('lecturescribe_providers.transcribe_chunk',side_effect=mock_transcribe):
+            with patch('scribelane_providers.chunks',side_effect=mock_chunks), patch('scribelane_providers.transcribe_chunk',side_effect=mock_transcribe):
                 args=dict(provider='groq',model='whisper-large-v3-turbo',secret='secret',output_dir=output,job_id='test',key_id='one')
                 self.assertEqual(len(transcribe_long(media,**args)),3)
                 self.assertEqual(len(transcribe_long(media,**args)),3)

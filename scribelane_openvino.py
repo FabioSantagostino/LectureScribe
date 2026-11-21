@@ -163,7 +163,7 @@ def transcribe_if_available(media: Path, model: str, language: str | None,
     if cancelled():
         raise InterruptedError()
     on_status('ov_benchmark')
-    with tempfile.TemporaryDirectory(prefix='lecturescribe_ov_') as temp:
+    with tempfile.TemporaryDirectory(prefix='scribelane_ov_') as temp:
         test = Path(temp) / 'sample.wav'
         convert_audio(media, test, seconds=12)
         speech = read_audio(test)
@@ -190,7 +190,7 @@ def transcribe_if_available(media: Path, model: str, language: str | None,
 
 
 def transcribe_on_device(media, language, pipe, device, cancelled, on_status=lambda phase: None):
-    with tempfile.TemporaryDirectory(prefix='lecturescribe_audio_ov_') as temp:
+    with tempfile.TemporaryDirectory(prefix='scribelane_audio_ov_') as temp:
         full_path = Path(temp) / 'full.wav'
         convert_audio(media, full_path)
         if cancelled():
@@ -239,7 +239,7 @@ def prepare_parallel(media, model, language, models_root, cancelled, on_status):
         return None
     model_dir = resolve_model(models_root, model, on_status)
     on_status('ov_benchmark')
-    with tempfile.TemporaryDirectory(prefix='lecturescribe_ov_sample_') as temp:
+    with tempfile.TemporaryDirectory(prefix='scribelane_ov_sample_') as temp:
         samples = []
         for index, source in enumerate(media):
             if cancelled():

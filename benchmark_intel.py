@@ -35,7 +35,7 @@ def main():
             print(f'  {elapsed:.1f} s')
     winner = min(results, key=results.get)
     print('Recommended cpu_threads:', winner)
-    config_dir = Path(os.getenv('APPDATA', str(Path.home()))) / 'LectureScribe'
+    config_dir = Path(os.getenv('APPDATA', str(Path.home()))) / 'ScribeLane'
     config_dir.mkdir(parents=True, exist_ok=True)
     config = config_dir / 'settings.json'
     try: saved = json.loads(config.read_text(encoding='utf-8'))

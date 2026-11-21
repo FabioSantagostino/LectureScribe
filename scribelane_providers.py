@@ -1,4 +1,4 @@
-"""Isolated API providers for LectureScribe. Never log secrets or raw HTTP responses."""
+"""Isolated API providers for ScribeLane. Never log secrets or raw HTTP responses."""
 from __future__ import annotations
 
 import json
@@ -187,7 +187,7 @@ def transcribe_long(media, *, provider, model, secret, language='auto', output_d
     # Do not reuse results across a different model, key/provider or modified recording.
     if saved.get('signature') != signature:
         saved = {'signature':signature,'completed':{}}
-    with tempfile.TemporaryDirectory(prefix='lecturescribe_chunks_') as td:
+    with tempfile.TemporaryDirectory(prefix='scribelane_chunks_') as td:
         for i, total, start, part in chunks(media, Path(td)):
             if cancelled():
                 raise InterruptedError('Cancelled')

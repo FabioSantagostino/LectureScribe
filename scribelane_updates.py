@@ -17,8 +17,8 @@ from pathlib import Path
 
 import requests
 
-VERSION = '1.5.2'
-ASSET_NAME = 'LectureScribe-Windows-x64.zip'
+VERSION = '1.6.0'
+ASSET_NAME = 'ScribeLane-Windows-x64.zip'
 
 
 def version_tuple(text):
@@ -60,10 +60,10 @@ def stage_update(asset, destination):
     if sha.hexdigest().lower() != digest.split(':', 1)[1].lower():
         raise RuntimeError('SHA-256 mismatch; downloaded update rejected')
     with zipfile.ZipFile(archive) as z:
-        entry = next((x for x in z.infolist() if x.filename == 'LectureScribe.exe'), None)
+        entry = next((x for x in z.infolist() if x.filename == 'ScribeLane.exe'), None)
         if not entry or entry.file_size > 1_500_000_000:
             raise RuntimeError('Invalid release archive')
-        new_exe = destination / 'LectureScribe-new.exe'
+        new_exe = destination / 'ScribeLane-new.exe'
         with z.open(entry) as f, new_exe.open('wb') as out:
             shutil.copyfileobj(f, out)
     return new_exe
@@ -109,7 +109,7 @@ def launch_installer(new_binary):
     target = Path(sys.executable).resolve()
     if not os.access(target.parent, os.W_OK):
         raise RuntimeError('Install location is read-only')
-    helper = Path(new_binary).parent / 'LectureScribe-updater.exe'
+    helper = Path(new_binary).parent / 'ScribeLane-updater.exe'
     shutil.copy2(target, helper)
     subprocess.Popen([str(helper), '--apply-update', str(os.getpid()),
                       str(target), str(new_binary)], close_fds=True)

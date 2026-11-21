@@ -36,7 +36,7 @@ def capture_playlist(url, *, check_cancel, on_playback=lambda: None, timeout=180
     if not is_webex_playback(url):
         raise WebexBrowserError("webex_capture_failed")
     token = token_urlsafe(32)
-    route = f"/lecturescribe/{token}"
+    route = f"/scribelane/{token}"
     ready = Event()
     complete = Event()
     result_lock = Lock()
@@ -69,8 +69,8 @@ def capture_playlist(url, *, check_cancel, on_playback=lambda: None, timeout=180
                 self.reply(404)
                 return
             self.reply(200, (
-                "<!doctype html><meta charset=utf-8><title>LectureScribe</title>"
-                "<h1>LectureScribe</h1><p>Install or enable the LectureScribe browser extension "
+                "<!doctype html><meta charset=utf-8><title>ScribeLane</title>"
+                "<h1>ScribeLane</h1><p>Install or enable the ScribeLane browser extension "
                 "and retry if Webex does not open automatically.</p>"
                 f'<a id="playback" href="{escape(url, quote=True)}">Open Webex</a>'
             ).encode("utf-8"))

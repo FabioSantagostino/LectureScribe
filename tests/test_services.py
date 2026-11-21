@@ -5,7 +5,7 @@ import zipfile
 from pathlib import Path
 from unittest.mock import patch, Mock
 
-from lecturescribe_updates import version_tuple, stage_update, VERSION
+from scribelane_updates import version_tuple, stage_update, VERSION
 
 
 class TestUpdates(unittest.TestCase):

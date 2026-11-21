@@ -1,14 +1,16 @@
-# LectureScribe
+# ScribeLane
 
 Trascrivi lezioni e registrazioni su Windows. Puoi partire da un link Webex, da una playlist HLS `.m3u8` o da un file audio o video. La trascrizione locale usa Whisper. In modalità cloud puoi scegliere Groq, OpenAI o Gemini. L'interfaccia è disponibile in italiano e inglese.
 
 ## Installazione su Windows 10 e 11
 
-1. Scarica `LectureScribe-Windows-x64.zip` dalla [pagina delle release](https://github.com/FabioSantagostino/LectureScribe/releases/latest).
-2. Estrai **tutto lo ZIP** in una cartella stabile e avvia `LectureScribe.exe`. Tieni la cartella `browser-extension` accanto all'EXE se usi Webex.
+1. Scarica `ScribeLane-Windows-x64.zip` dalla [pagina delle release](https://github.com/FabioSantagostino/ScribeLane/releases/latest).
+2. Estrai **tutto lo ZIP** in una cartella stabile e avvia `ScribeLane.exe`. Tieni la cartella `browser-extension` accanto all'EXE se usi Webex.
 3. Al primo avvio, indica il browser predefinito di Windows. La scelta viene salvata e puoi aggiornarla da **Avanzate → Browser per Webex**.
 
 Per installare anche l’estensione o aggiornarne i file, scarica ed estrai lo ZIP completo. L’aggiornamento dall’app sostituisce l’EXE.
+
+Se provieni da una versione precedente alla 1.6.0, scarica lo ZIP completo e avvia `ScribeLane.exe`. ScribeLane usa un nuovo profilo applicativo e una nuova voce in Gestione credenziali di Windows. Imposta le cartelle di lavoro e aggiungi di nuovo le eventuali chiavi cloud. Per Webex, carica l’estensione dal nuovo pacchetto.
 
 ## Trascrivere un file o un link HLS diretto
 
@@ -18,11 +20,11 @@ Per installare anche l’estensione o aggiornarne i file, scarica ed estrai lo Z
 
 ## Trascrivere da un link Webex `/playback`
 
-Incolla il link Webex originale e premi **Avvia trascrizione**. LectureScribe prova prima a scaricarlo con yt-dlp. Se ci riesce, il lavoro continua senza aprire il browser. Questo dipende dalla registrazione e da ciò che Webex permette a yt-dlp di recuperare direttamente. Il browser predefinito entra in gioco solo se serve il secondo tentativo. Anche i link HLS diretti funzionano senza estensione.
+Incolla il link Webex originale e premi **Avvia trascrizione**. ScribeLane prova prima a scaricarlo con yt-dlp. Se ci riesce, il lavoro continua senza aprire il browser. Questo dipende dalla registrazione e da ciò che Webex permette a yt-dlp di recuperare direttamente. Il browser predefinito entra in gioco solo se serve il secondo tentativo. Anche i link HLS diretti funzionano senza estensione.
 
 ### Installa l'estensione solo se il link richiede il browser
 
-Per i browser Chromium, apri la pagina delle estensioni, abilita **Modalità sviluppatore** e scegli **Carica estensione non pacchettizzata**. Seleziona la cartella `browser-extension` accanto a `LectureScribe.exe`. L'installazione si fa una volta per profilo del browser. Mantieni la cartella nella posizione in cui l'hai caricata.
+Per i browser Chromium, apri la pagina delle estensioni, abilita **Modalità sviluppatore** e scegli **Carica estensione non pacchettizzata**. Seleziona la cartella `browser-extension` accanto a `ScribeLane.exe`. L'installazione si fa una volta per profilo del browser. Mantieni la cartella nella posizione in cui l'hai caricata.
 
 Se il tuo browser è basato su Chromium e non compare per nome nelle impostazioni dell’app, seleziona **Altri browser Chromium**.
 
@@ -37,15 +39,15 @@ In **Firefox**, apri `about:debugging#/runtime/this-firefox`, seleziona **Carica
 
 ### Avvia la registrazione
 
-1. Dopo aver installato l’estensione, riprova il link Webex originale in LectureScribe.
+1. Dopo aver installato l’estensione, riprova il link Webex originale in ScribeLane.
 2. L'estensione accompagna la nuova scheda al player nel browser predefinito di Windows. Se Webex richiede l'accesso, completalo sul sito nella sessione del tuo browser. Premi **Play** se il video rimane in pausa.
-3. Quando il player riceve la playlist HLS, LectureScribe la scarica con yt-dlp e avvia la trascrizione. Per una coda con più registrazioni, ripeti la riproduzione nelle schede che la richiedono.
+3. Quando il player riceve la playlist HLS, ScribeLane la scarica con yt-dlp e avvia la trascrizione. Per una coda con più registrazioni, ripeti la riproduzione nelle schede che la richiedono.
 
 ### Cosa fa l'estensione
 
-L'estensione osserva le risposte Webex della sola scheda avviata per quel lavoro. Invia l'indirizzo della playlist, con i parametri originali, all'app attraverso una connessione temporanea su `127.0.0.1`. Il browser gestisce la sessione Webex. LectureScribe non legge né esporta cookie o password.
+L'estensione osserva le risposte Webex della sola scheda avviata per quel lavoro. Invia l'indirizzo della playlist, con i parametri originali, all'app attraverso una connessione temporanea su `127.0.0.1`. Il browser gestisce la sessione Webex. ScribeLane non legge né esporta cookie o password.
 
-Se LectureScribe segnala che il download diretto non è riuscito, puoi attivare l’estensione nel profilo del browser predefinito oppure incollare un URL HLS valido. Se il player si apre ma la playlist non viene rilevata, avvia il video e controlla che la registrazione sia riproducibile. Se hai già una playlist HLS valida puoi incollarla direttamente, anche senza estensione. Se è scaduta, riparti dal link Webex. Tieni privati i link firmati.
+Se ScribeLane segnala che il download diretto non è riuscito, puoi attivare l’estensione nel profilo del browser predefinito oppure incollare un URL HLS valido. Se il player si apre ma la playlist non viene rilevata, avvia il video e controlla che la registrazione sia riproducibile. Se hai già una playlist HLS valida puoi incollarla direttamente, anche senza estensione. Se è scaduta, riparti dal link Webex. Tieni privati i link firmati.
 
 ## Trascrizione cloud e file di uscita
 
@@ -55,7 +57,7 @@ Whisper locale esporta TXT, Markdown e SRT. I provider cloud esportano TXT e Mar
 
 ## Accelerazione locale Intel con OpenVINO
 
-Dalla v1.5.1 il runtime OpenVINO è incluso nell’EXE Windows. In modalità **Locale**, LectureScribe cerca una GPU o NPU Intel esposta dai driver. Se la trova, scarica al primo utilizzo il modello Whisper INT8 ufficiale corrispondente alla qualità selezionata, salvo che sia già disponibile. Conserva il modello per i lavori successivi in `%APPDATA%\LectureScribe\openvino_models`. I modelli richiedono spazio su disco e, al primo utilizzo, una connessione.
+Dalla v1.5.1 il runtime OpenVINO è incluso nell’EXE Windows. In modalità **Locale**, ScribeLane cerca una GPU o NPU Intel esposta dai driver. Se la trova, scarica al primo utilizzo il modello Whisper INT8 ufficiale corrispondente alla qualità selezionata, salvo che sia già disponibile. Conserva il modello per i lavori successivi in `%APPDATA%\ScribeLane\openvino_models`. I modelli richiedono spazio su disco e, al primo utilizzo, una connessione.
 
 L’app confronta i dispositivi compatibili su un breve campione, poi mostra durante la trascrizione **OpenVINO GPU**, **OpenVINO NPU** o **CPU**. La CPU resta disponibile se è più veloce nel confronto, se un modello non è compatibile o se manca un acceleratore. Durante la trascrizione cloud l'inferenza viene svolta dal provider.
 
@@ -70,11 +72,11 @@ Per usare un modello preparato da sorgente puoi ancora installare `requirements-
 ```powershell
 py -3.12 -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
-.\.venv\Scripts\python.exe lecturescribe.pyw
+.\.venv\Scripts\python.exe scribelane.pyw
 ```
 
 Per eseguire i test, usa `python -m unittest discover -s tests -v` nell'ambiente Python dell'app. Il workflow GitHub **Build Windows release** compila e verifica il pacchetto Windows.
 
 ## Licenza
 
-MIT per il codice di LectureScribe. Librerie, modelli e servizi online mantengono le rispettive licenze e condizioni.
+MIT per il codice di ScribeLane. Librerie, modelli e servizi online mantengono le rispettive licenze e condizioni.

@@ -3,7 +3,7 @@ import json
 import uuid
 from pathlib import Path
 
-SERVICE = 'LectureScribe/API'
+SERVICE = 'ScribeLane/API'
 
 class Vault:
     def __init__(self, path):

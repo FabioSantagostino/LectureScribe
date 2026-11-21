@@ -18,7 +18,7 @@ api.runtime.onMessage.addListener((message, sender, respond) => {
   const target = webexURL(message.target);
   if (!target?.pathname.toLowerCase().split("/").includes("playback")) return;
   const bridge = sender.url;
-  if (!/^http:\/\/127\.0\.0\.1:\d{1,5}\/lecturescribe\/[A-Za-z0-9_-]{43}$/.test(bridge)) return;
+  if (!/^http:\/\/127\.0\.0\.1:\d{1,5}\/scribelane\/[A-Za-z0-9_-]{43}$/.test(bridge)) return;
   const key = keyFor(sender.tab.id);
   (async () => {
     await api.storage.session.set({ [key]: { bridge, expiry: Date.now() + 200000 } });

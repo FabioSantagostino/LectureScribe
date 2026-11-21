@@ -1,4 +1,4 @@
-"""One-time OpenVINO Whisper model conversion for LectureScribe.
+"""One-time OpenVINO Whisper model conversion for ScribeLane.
 
 Run after installing the OPTIONAL acceleration toolchain. The main app only
 uses exact matching preconverted IR models and otherwise uses faster-whisper.
@@ -28,7 +28,7 @@ def main():
     parser = argparse.ArgumentParser(description='Prepare matching OpenVINO Whisper IR')
     parser.add_argument('quality', choices=MODEL_IDS)
     parser.add_argument('--output', type=Path,
-                        default=Path(os.getenv('APPDATA', str(Path.home()))) / 'LectureScribe/openvino_models')
+                        default=Path(os.getenv('APPDATA', str(Path.home()))) / 'ScribeLane/openvino_models')
     args = parser.parse_args()
     target = args.output / MODEL_DIRS[args.quality]
     target.parent.mkdir(parents=True, exist_ok=True)

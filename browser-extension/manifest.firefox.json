@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "LectureScribe Webex",
+  "name": "ScribeLane Webex",
   "version": "1.0.0",
-  "description": "Send the Webex playlist for one LectureScribe tab to the desktop app.",
+  "description": "Send the Webex playlist for one ScribeLane tab to the desktop app.",
   "permissions": [
     "webRequest",
     "storage"
@@ -30,7 +30,7 @@
   ],
   "browser_specific_settings": {
     "gecko": {
-      "id": "webex@lecturescribe.local",
+      "id": "webex@scribelane.local",
       "strict_min_version": "126.0"
     }
   }

@@ -1,4 +1,4 @@
-"""LectureScribe — local lecture transcription GUI for Windows."""
+"""ScribeLane — local lecture transcription GUI for Windows."""
 from __future__ import annotations
 
 import json
@@ -22,20 +22,20 @@ import imageio_ffmpeg
 import yt_dlp
 from faster_whisper import WhisperModel
 from yt_dlp.utils import DownloadError
-from lecturescribe_credentials import Vault
-from lecturescribe_webex import WebexBrowserError, capture_playlist, is_webex_playback
-from lecturescribe_openvino import (
+from scribelane_credentials import Vault
+from scribelane_webex import WebexBrowserError, capture_playlist, is_webex_playback
+from scribelane_openvino import (
     OpenVINOUnavailable, prepare_parallel, transcribe_if_available, transcribe_on_device,
 )
-from lecturescribe_providers import MODELS, verify_key, transcribe_long, ProviderError, available_gemini_models
-from lecturescribe_updates import VERSION, fetch_release, stage_update, launch_installer, version_tuple, run_update_mode
+from scribelane_providers import MODELS, verify_key, transcribe_long, ProviderError, available_gemini_models
+from scribelane_updates import VERSION, fetch_release, stage_update, launch_installer, version_tuple, run_update_mode
 try:
-    from lecturescribe_build import REPO as BUILT_REPO
+    from scribelane_build import REPO as BUILT_REPO
 except ImportError:
     BUILT_REPO = ""
-OFFICIAL_REPO = "FabioSantagostino/LectureScribe"
+OFFICIAL_REPO = "FabioSantagostino/ScribeLane"
 
-APP = "LectureScribe"
+APP = "ScribeLane"
 CONFIG_DIR = Path(os.getenv("APPDATA", str(Path.home()))) / APP
 CONFIG_FILE = CONFIG_DIR / "settings.json"
 OV_MODELS = CONFIG_DIR / "openvino_models"
@@ -89,7 +89,7 @@ I18N['it'].update({
     'ov_model': 'Download del modello OpenVINO…',
     'ov_benchmark': 'Verifica dei dispositivi OpenVINO…',
     'ov_retry_gpu': 'NPU: cache esaurita. Nuovo tentativo su OpenVINO GPU…',
-    'webex_setup_help': 'Scegli il browser predefinito di Windows. LectureScribe lo usa solo se il download diretto fallisce.',
+    'webex_setup_help': 'Scegli il browser predefinito di Windows. ScribeLane lo usa solo se il download diretto fallisce.',
     'webex_chromium_help': 'Se un link Webex richiede il browser, puoi usare l’estensione Chromium inclusa. Vedi il README.',
     'webex_firefox_help': 'Se un link Webex richiede il browser, puoi caricare l’estensione da about:debugging.',
     'webex_other': 'Altri browser Chromium',
@@ -105,7 +105,7 @@ I18N['en'].update({
     'ov_model': 'Downloading the OpenVINO model…',
     'ov_benchmark': 'Checking OpenVINO devices…',
     'ov_retry_gpu': 'NPU cache is full. Retrying with OpenVINO GPU…',
-    'webex_setup_help': 'Select your Windows default browser. LectureScribe uses it only if direct download fails.',
+    'webex_setup_help': 'Select your Windows default browser. ScribeLane uses it only if direct download fails.',
     'webex_chromium_help': 'If a Webex link needs the browser, use the included Chromium extension. See the README.',
     'webex_firefox_help': 'If a Webex link needs the browser, load the extension from about:debugging.',
     'webex_other': 'Other Chromium browsers',
@@ -193,7 +193,7 @@ class App:
         self._last_palette = None
         self.scroll_area = None
         self.main = None
-        root.title("LectureScribe")
+        root.title("ScribeLane")
         root.geometry("760x620")
         root.minsize(590, 470)
         self.apply_theme()
@@ -542,7 +542,7 @@ class App:
         header.pack(fill="x", pady=(0, 11))
         branding = ctk.CTkFrame(header, fg_color="transparent")
         branding.pack(side="left", fill="x", expand=True)
-        self.text(branding, "◉  LectureScribe", 21, True).pack(anchor="w")
+        self.text(branding, "◉  ScribeLane", 21, True).pack(anchor="w")
         self.text(branding, self.t("tagline"), 11, muted=True).pack(anchor="w")
         tools = ctk.CTkFrame(header, fg_color="transparent")
         tools.pack(side="right")
@@ -766,7 +766,7 @@ class App:
             return
         def task():
             try:
-                folder = Path(tempfile.mkdtemp(prefix="lecturescribe_update_"))
+                folder = Path(tempfile.mkdtemp(prefix="scribelane_update_"))
                 binary = stage_update(asset, folder)
                 self.send("update_ready", str(binary))
             except Exception:
@@ -1362,7 +1362,7 @@ class App:
     def process_one(self, job):
         source = job["source"]
         if source.startswith(("http://", "https://")):
-            with tempfile.TemporaryDirectory(prefix="lecturescribe_") as temp:
+            with tempfile.TemporaryDirectory(prefix="scribelane_") as temp:
                 media, title = self.download(source, Path(temp))
                 self.resolve_name(job, media, title)
                 self.transcribe_engine(job, media, True)

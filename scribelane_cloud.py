@@ -39,7 +39,7 @@ def cloud_transcribe(media: Path, api_key: str, language: str, progress, cancell
         start = i * chunk_seconds
         if start >= duration:
             break
-        with tempfile.TemporaryDirectory(prefix='lecturescribe_cloud_') as tmp:
+        with tempfile.TemporaryDirectory(prefix='scribelane_cloud_') as tmp:
             audio = Path(tmp) / 'clip.mp3'
             proc = subprocess.run(
                 [ffmpeg, '-nostdin', '-v', 'error', '-ss', str(start),
