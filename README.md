@@ -1,40 +1,61 @@
-# LectureScribe v1.5.0 — DEVELOPMENT CANDIDATE (NOT RELEASED)
+# LectureScribe
 
-LectureScribe accepts Webex playback links, HLS URLs and local media in the same field and queue. Version 1.5.0 is a release candidate.
+Trascrivi lezioni e registrazioni su Windows. Puoi partire da un link Webex, da una playlist HLS `.m3u8` o da un file audio o video. La trascrizione locale usa Whisper. In modalità cloud puoi scegliere Groq, OpenAI o Gemini. L'interfaccia è disponibile in italiano e inglese.
 
-## Webex nel browser predefinito (Windows)
+## Installazione su Windows 10 e 11
 
-1. Estrai tutto lo ZIP in una cartella da conservare. Avvia `LectureScribe.exe` e indica quale browser è impostato come predefinito in Windows. LectureScribe salva la scelta e mostra le istruzioni per la variante corretta. Puoi cambiarla da **Avanzate → Browser per Webex**.
-2. In **Samsung Internet per Windows**, apri `internet://extensions`. In Chrome, Edge o Brave apri rispettivamente `chrome://extensions`, `edge://extensions` o `brave://extensions`. Attiva **Modalità sviluppatore** e usa **Carica estensione non pacchettizzata** per selezionare la cartella `browser-extension` accanto all'EXE. Questa installazione si fa una volta per profilo del browser.
-3. In **Firefox**, apri `about:debugging#/runtime/this-firefox`, scegli **Carica componente aggiuntivo temporaneo** e seleziona `browser-extension/firefox/manifest.json`. L'estensione di questa candidata va ricaricata dopo il riavvio di Firefox. Nel repository sorgente, prepara una copia di `browser-extension` con `manifest.firefox.json` rinominato in `manifest.json`.
-4. Incolla il link originale Webex `/playback` in LectureScribe e avvia la trascrizione. Windows apre una nuova scheda nel browser predefinito. Se il player non parte da solo, premi **Play** nella scheda Webex. Quando il player riceve la playlist, LectureScribe inizia il download. Puoi anche incollare un URL HLS valido direttamente, senza estensione.
+1. Scarica `LectureScribe-Windows-x64.zip` dalla [pagina delle release](https://github.com/FabioSantagostino/LectureScribe/releases/latest).
+2. Estrai **tutto lo ZIP** in una cartella stabile e avvia `LectureScribe.exe`. Tieni la cartella `browser-extension` accanto all'EXE se usi Webex.
+3. Al primo avvio, indica il browser predefinito di Windows. Per Samsung Internet scegli **Altri browser Chromium (Samsung Internet incluso)**. La scelta viene salvata e puoi aggiornarla da **Avanzate → Browser per Webex**.
 
-L'estensione osserva solo le risposte Webex della scheda aperta per la registrazione e invia l'URL della playlist una sola volta a LectureScribe tramite un collegamento su `127.0.0.1`. Il browser continua a gestire la sessione Webex. L'app non legge cookie o credenziali. Gli URL HLS possono scadere. Se l'estensione non viene rilevata, verifica che sia attiva nel profilo usato dal browser predefinito e riprova.
+Se provieni dalla v1.3.0, scarica ed estrai lo ZIP completo. L'aggiornamento dall'app sostituisce l'EXE. L'estensione va installata dal nuovo pacchetto.
 
-Samsung documenta il caricamento delle estensioni in modalità sviluppatore su Windows. Il flusso resta da verificare sulla registrazione PoliMi e sulla versione di Samsung Internet installata. [Documentazione Samsung sulle estensioni](https://developer.samsung.com/browser/policy/extension-unpublished-availability.html)
+## Trascrivere un file o un link HLS diretto
 
-## Experimental automatic Intel acceleration
+1. Seleziona un file o incolla il link `.m3u8`. Per aggiungere più elementi usa **+ File** o **+ Link** nella coda.
+2. Scegli il motore di trascrizione, la lingua del parlato e le cartelle di destinazione. Con Whisper puoi scegliere la qualità. In modalità cloud scegli il provider e il modello.
+3. Premi **Avvia trascrizione**. Il modello Whisper viene scaricato al primo utilizzo. L'opzione **Conserva il video scaricato** salva una copia del download nella cartella indicata. I file locali originali vengono conservati.
 
-No CPU/GPU/NPU selector is exposed. LectureScribe checks for **exactly matching** converted OpenVINO IR models, probes compatible devices, benchmarks a short speech sample and chooses the fastest supported device. If OpenVINO is absent, the model fails to compile, or the CPU wins, it uses the existing `faster-whisper` CPU backend. A benchmark on a 12-second sample does **not** guarantee the fastest results for an entire lecture. Devices are selected, not automatically run simultaneously.
+## Trascrivere da un link Webex `/playback`
 
-In a **separate conversion environment**, install `requirements-accelerated.txt` and convert a model once:
+### Installa l'estensione per il tuo browser
 
-```powershell
-python -m pip install -r requirements-accelerated.txt
-python prepare_openvino.py fast
-# or: python prepare_openvino.py balanced
-# or: python prepare_openvino.py accurate
-```
+Per i browser Chromium, apri la pagina delle estensioni, abilita **Modalità sviluppatore** e scegli **Carica estensione non pacchettizzata**. Seleziona la cartella `browser-extension` accanto a `LectureScribe.exe`. L'installazione si fa una volta per profilo del browser. Mantieni la cartella nella posizione in cui l'hai caricata.
 
-The converted model is saved under `%APPDATA%\LectureScribe\openvino_models`. The full target model must have a compatible OpenVINO GenAI export; conversion can fail for a particular architecture or version. This runtime is **optional**: for source runs also install `openvino-genai` in LectureScribe's application environment. The published PyInstaller binary does not yet bundle the optional OpenVINO runtime, so **do not advertise GPU/NPU acceleration as working in the distributed EXE until a Windows build with that runtime is tested**. Compiling a model on NPU can require substantial time and updated Intel NPU drivers. Some Whisper IRs run on GPU but not NPU.
+| Browser | Pagina delle estensioni |
+| --- | --- |
+| Samsung Internet per Windows | `internet://extensions` |
+| Google Chrome | `chrome://extensions` |
+| Microsoft Edge | `edge://extensions` |
+| Brave | `brave://extensions` |
 
-Use `python -m unittest discover -s tests -p 'test_v15.py' -v` for the isolated v1.5 security/model tests. For a real check, inspect `%APPDATA%\LectureScribe\diagnostics.log` for `OPENVINO_ACTIVE_GPU` or `OPENVINO_ACTIVE_NPU`. The mere presence of a GPU/NPU in Device Manager does not prove it was used.
+In **Firefox**, apri `about:debugging#/runtime/this-firefox`, seleziona **Carica componente aggiuntivo temporaneo** e apri `browser-extension/firefox/manifest.json`. Firefox rimuove questa installazione temporanea quando si chiude. Ricaricala dopo il riavvio. Se usi il repository sorgente, copia `browser-extension` in una cartella distinta e sostituisci `manifest.json` con `manifest.firefox.json` rinominato.
 
-## Installation (Windows 10/11)
+### Avvia la registrazione
 
-For normal users, download the packaged `LectureScribe-Windows-x64.zip` from a tested GitHub Release, extract and launch `LectureScribe.exe`. The Whisper model downloads on first use. New cloud/updater functions require network access. The EXE is currently unsigned, so inspect provenance and test before installing.
+1. Incolla il link Webex originale in LectureScribe e premi **Avvia trascrizione**.
+2. L'estensione accompagna la nuova scheda al player nel browser predefinito di Windows. Se Webex richiede l'accesso, completalo sul sito nella sessione del tuo browser. Premi **Play** se il video rimane in pausa.
+3. Quando il player riceve la playlist HLS, LectureScribe la scarica con yt-dlp e avvia la trascrizione. Per una coda con più registrazioni, ripeti la riproduzione nelle schede che la richiedono.
 
-From source using Python 3.12:
+### Cosa fa l'estensione
+
+L'estensione osserva le risposte Webex della sola scheda avviata per quel lavoro. Invia l'indirizzo della playlist, con i parametri originali, all'app attraverso una connessione temporanea su `127.0.0.1`. Il browser gestisce la sessione Webex. LectureScribe non legge né esporta cookie o password.
+
+Se compare **Estensione LectureScribe non rilevata**, controlla che sia attiva nel profilo aperto dal browser predefinito e riprova. Se il player si apre ma la playlist non viene rilevata, avvia il video e controlla che la registrazione sia riproducibile. Se hai già una playlist HLS valida puoi incollarla direttamente, anche senza estensione. Se è scaduta, riparti dal link Webex. Tieni privati i link firmati.
+
+## Trascrizione cloud e file di uscita
+
+In modalità **Cloud**, scegli Groq, OpenAI o Gemini. Aggiungi e verifica una chiave da **Gestisci chiavi API** e conferma l'invio dell'audio prima di avviare la coda. Windows Credential Manager conserva le chiavi. La trascrizione cloud usa blocchi MP3 con una breve sovrapposizione e salva checkpoint locali per riprendere i lavori interrotti. Le richieste possono generare costi presso il provider.
+
+Whisper locale esporta TXT, Markdown e SRT. I provider cloud esportano TXT e Markdown con timestamp approssimativi per blocco. In modalità locale l'audio viene trascritto sul dispositivo.
+
+## OpenVINO sperimentale (da sorgente)
+
+Per la trascrizione locale è disponibile un backend OpenVINO GenAI opzionale. Con un modello IR compatibile, l'app confronta CPU e dispositivi Intel disponibili su un breve campione e può scegliere automaticamente GPU o NPU. Whisper su CPU resta disponibile quando OpenVINO manca o non viene scelto. L'EXE distribuito usa il runtime standard. OpenVINO richiede un avvio da sorgente con librerie e modelli aggiuntivi.
+
+In un ambiente separato, installa `requirements-accelerated.txt` ed esegui `python prepare_openvino.py balanced` (o `fast` / `accurate`). Per usare il modello preparato, installa `openvino-genai` anche nell'ambiente Python da cui avvii LectureScribe. Il modello viene salvato in `%APPDATA%\LectureScribe\openvino_models`.
+
+## Avvio da sorgente
 
 ```powershell
 py -3.12 -m venv .venv
@@ -42,39 +63,8 @@ py -3.12 -m venv .venv
 .\.venv\Scripts\python.exe lecturescribe.pyw
 ```
 
-For Intel CPU tuning, optional:
+Per eseguire i test, usa `python -m unittest discover -s tests -v` nell'ambiente Python dell'app. Il workflow GitHub **Build Windows release** compila e verifica il pacchetto Windows.
 
-```powershell
-.\.venv\Scripts\python.exe benchmark_intel.py "C:\path\to\sample.mp4"
-```
+## Licenza
 
-The benchmark uses a 60-second audio excerpt and saves the preferred `cpu_threads` setting. It may take several minutes; it never uploads the sample.
-
-## Batch transcriptions
-
-Use **+ Files** to add multiple local files or **+ Link** for recording URLs. The normal source field can also contain one file/URL, which will be processed together with queued items. The resulting status shows successes versus failures. If a custom lecture name is set for several inputs, the app adds a numeric suffix.
-
-## Cloud mode / privacy
-
-Choose **Cloud**, select Groq, OpenAI or Gemini, and confirm each batch before upload. Manage labeled API credentials through **Manage API keys**. Windows Credential Manager stores the secrets. LectureScribe compresses the audio into bounded MP3 chunks with a short overlap and stores private transcript checkpoints for resuming interrupted cloud jobs. Cloud exports TXT and Markdown with approximate chunk timestamps. Local Whisper exports TXT, Markdown and SRT.
-
-Local transcription runs on the device. The recording provider and model host are contacted when downloading media or models.
-
-## Updating inside the app
-
-Open **Advanced → Updates → Check for updates**. The packaged EXE knows the repository it was built from; source users can enter `owner/repo`. The app asks for consent, fetches the public ZIP asset, requires GitHub's SHA-256 asset digest, stages a new EXE and restarts. This is an in-place update, not a privileged installer. The directory must be writable and updates should be tested on an isolated Windows copy first. Use a GitHub Release with an attached `LectureScribe-Windows-x64.zip` asset.
-
-## Development / release
-
-- Edit source; run `python -m unittest discover -s tests -v`.
-- Compile through `.github/workflows/release.yml`; `workflow_dispatch` compiles without publishing.
-- **Only after release verification**, tag the verified version and push it. GitHub Actions uploads the Windows ZIP to the release.
-- Do not upload lectures, transcripts, sessions/cookie files, API keys, or signed Webex URLs.
-
-## Candidate verification
-
-Run `python -m unittest discover -s tests -v` locally. Before tagging, verify the EXE on Windows, a private Webex recording through the default-browser extension and transcription, cloud jobs using real provider credentials, and the optional OpenVINO runtime using prepared models and Intel hardware.
-
-## License
-
-MIT for LectureScribe source. Libraries, models and online providers retain their own terms.
+MIT per il codice di LectureScribe. Librerie, modelli e servizi online mantengono le rispettive licenze e condizioni.

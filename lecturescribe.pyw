@@ -85,7 +85,7 @@ I18N['it'].update({
     'webex_setup_help': 'Indica il tuo browser predefinito in Windows. LectureScribe userà la finestra e la sessione già aperte.',
     'webex_chromium_help': 'Carica una volta l’estensione Chromium inclusa nella cartella browser-extension. Vedi il README.',
     'webex_firefox_help': 'Carica l’estensione Firefox da about:debugging. Vedi il README per la durata dell’installazione.',
-    'webex_other': 'Altro browser Chromium',
+    'webex_other': 'Altri browser Chromium (Samsung Internet incluso)',
     'webex_save': 'Salva browser',
     'webex_connect': 'Apertura del browser predefinito…',
     'webex_wait': 'Avvia il video nella scheda Webex per rilevare la playlist…',
@@ -98,7 +98,7 @@ I18N['en'].update({
     'webex_setup_help': 'Select your Windows default browser. LectureScribe will use that browser and its current session.',
     'webex_chromium_help': 'Load the included Chromium extension from browser-extension once. See the README.',
     'webex_firefox_help': 'Load the Firefox extension from about:debugging. See the README for installation lifetime.',
-    'webex_other': 'Other Chromium browser',
+    'webex_other': 'Other Chromium browsers (including Samsung Internet)',
     'webex_save': 'Save browser',
     'webex_connect': 'Opening the default browser…',
     'webex_wait': 'Start the video in the Webex tab to detect the playlist…',
@@ -169,7 +169,10 @@ class App:
         self.spoken = tk.StringVar(value=config.get("spoken", "auto"))
         self.engine = tk.StringVar(value=config.get("engine", "local"))
         self.api_key = tk.StringVar(value="")  # Session-only, never stored or logged.
-        self.webex_browser = config.get("webex_browser", "")
+        saved_browser = config.get("webex_browser", "")
+        if saved_browser in ("Samsung Internet", "Altro browser Chromium", "Other Chromium browser"):
+            saved_browser = "chromium"
+        self.webex_browser = saved_browser if saved_browser in ("chromium", "Chrome", "Edge", "Brave", "Firefox") else ""
         self.cpu_threads = config.get("cpu_threads", min(8, os.cpu_count() or 8))
         self.update_repo = tk.StringVar(value=OFFICIAL_REPO)
         self.status = tk.StringVar(value=I18N[self.ui_language.get()]["ready"])
@@ -1054,9 +1057,17 @@ class App:
         pane.pack(fill="both", expand=True, padx=16, pady=16)
         self.text(pane, self.t("webex_setup_help"), 12, wraplength=425,
                   justify="left").pack(padx=14, pady=(14, 10))
-        choices = ["Samsung Internet", "Chrome", "Edge", "Brave", "Firefox", self.t("webex_other")]
-        selected = ctk.StringVar(value=self.webex_browser or choices[0])
-        ctk.CTkOptionMenu(pane, variable=selected, values=choices).pack(pady=4)
+        browsers = {
+            self.t("webex_other"): "chromium",
+            "Chrome": "Chrome",
+            "Edge": "Edge",
+            "Brave": "Brave",
+            "Firefox": "Firefox",
+        }
+        selected_label = next((label for label, browser in browsers.items()
+                               if browser == self.webex_browser), self.t("webex_other"))
+        selected = ctk.StringVar(value=selected_label)
+        ctk.CTkOptionMenu(pane, variable=selected, values=list(browsers)).pack(pady=4)
         instruction = self.text(pane, "", 11, wraplength=420, justify="left")
         instruction.pack(padx=12, pady=8)
 
@@ -1065,7 +1076,7 @@ class App:
             instruction.configure(text=self.t(key))
 
         def save():
-            self.webex_browser = selected.get()
+            self.webex_browser = browsers[selected.get()]
             self.save_config()
             dlg.destroy()
 
