@@ -6,7 +6,7 @@ Trascrivi lezioni e registrazioni su Windows. Puoi partire da un link Webex, da 
 
 1. Scarica `LectureScribe-Windows-x64.zip` dalla [pagina delle release](https://github.com/FabioSantagostino/LectureScribe/releases/latest).
 2. Estrai **tutto lo ZIP** in una cartella stabile e avvia `LectureScribe.exe`. Tieni la cartella `browser-extension` accanto all'EXE se usi Webex.
-3. Al primo avvio, indica il browser predefinito di Windows. Se il tuo browser non compare per nome ed è basato su Chromium, scegli **Altri browser Chromium**. La scelta viene salvata e puoi aggiornarla da **Avanzate → Browser per Webex**.
+3. Al primo avvio, indica il browser predefinito di Windows. La scelta viene salvata e puoi aggiornarla da **Avanzate → Browser per Webex**.
 
 Per installare anche l’estensione o aggiornarne i file, scarica ed estrai lo ZIP completo. L’aggiornamento dall’app sostituisce l’EXE.
 
@@ -23,6 +23,8 @@ Incolla il link Webex originale e premi **Avvia trascrizione**. LectureScribe pr
 ### Installa l'estensione solo se il link richiede il browser
 
 Per i browser Chromium, apri la pagina delle estensioni, abilita **Modalità sviluppatore** e scegli **Carica estensione non pacchettizzata**. Seleziona la cartella `browser-extension` accanto a `LectureScribe.exe`. L'installazione si fa una volta per profilo del browser. Mantieni la cartella nella posizione in cui l'hai caricata.
+
+Se il tuo browser è basato su Chromium e non compare per nome nelle impostazioni dell’app, seleziona **Altri browser Chromium**.
 
 | Browser | Pagina delle estensioni |
 | --- | --- |
