@@ -6,7 +6,7 @@ Trascrivi lezioni e registrazioni su Windows. Puoi partire da un link Webex, da 
 
 1. Scarica `LectureScribe-Windows-x64.zip` dalla [pagina delle release](https://github.com/FabioSantagostino/LectureScribe/releases/latest).
 2. Estrai **tutto lo ZIP** in una cartella stabile e avvia `LectureScribe.exe`. Tieni la cartella `browser-extension` accanto all'EXE se usi Webex.
-3. Al primo avvio, indica il browser predefinito di Windows. Per Samsung Internet scegli **Altri browser Chromium (Samsung Internet incluso)**. La scelta viene salvata e puoi aggiornarla da **Avanzate → Browser per Webex**.
+3. Al primo avvio, indica il browser predefinito di Windows. Per Samsung Internet scegli **Altri browser Chromium**. La scelta viene salvata e puoi aggiornarla da **Avanzate → Browser per Webex**.
 
 Se provieni dalla v1.3.0, scarica ed estrai lo ZIP completo. L'aggiornamento dall'app sostituisce l'EXE. L'estensione va installata dal nuovo pacchetto.
 
