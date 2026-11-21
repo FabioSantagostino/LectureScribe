@@ -153,6 +153,10 @@ def transcribe_if_available(media: Path, model: str, language: str | None,
     available = device_list()
     if not available:
         raise OpenVINOUnavailable('RUNTIME_UNAVAILABLE')
+    # Some NPU Whisper models can return an empty or incomplete result instead
+    # of raising when auto-detection exhausts the decoder cache.
+    if language is None:
+        available = [device for device in available if device != 'NPU']
     if not ({'GPU', 'NPU'} & set(available)):
         raise OpenVINOUnavailable('NO_ACCELERATOR')
     model_dir = resolve_model(models_root, model, on_status)
@@ -228,6 +232,8 @@ def transcribe_on_device(media, language, pipe, device, cancelled, on_status=lam
 
 
 def prepare_parallel(media, model, language, models_root, cancelled, on_status):
+    if language is None:
+        return None
     available = device_list()
     if not {'GPU', 'NPU'}.issubset(available):
         return None

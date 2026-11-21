@@ -31,13 +31,19 @@ class OpenVINOTests(unittest.TestCase):
               patch.object(backend, "transcribe_on_device",
                            side_effect=[backend.OpenVINOUnavailable("NPU_KV_CACHE"), result]) as transcribe):
             self.assertEqual(
-                backend.transcribe_if_available(Path("audio.wav"), "small", None, Path("models"),
+                backend.transcribe_if_available(Path("audio.wav"), "small", "it", Path("models"),
                                                 Path("bench"), on_status=phases.append),
                 (result, "GPU"),
             )
         make.assert_called_once_with(Path("model"), "GPU")
         self.assertEqual(transcribe.call_args.args[2:4], (gpu, "GPU"))
         self.assertIn("ov_retry_gpu", phases)
+
+    def test_queue_skips_npu_in_automatic_language_mode(self):
+        with patch.object(backend, "device_list") as discover:
+            self.assertIsNone(backend.prepare_parallel([], "small", None, Path("models"),
+                                                       lambda: False, lambda _: None))
+        discover.assert_not_called()
 
 
 if __name__ == '__main__':
