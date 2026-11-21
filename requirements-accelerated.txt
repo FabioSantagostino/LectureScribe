@@ -1,0 +1,6 @@
+# Optional Intel acceleration for source installations. Not yet validated on user's Windows machine.
+openvino-genai>=2025.2
+numpy>=1.26,<3
+# Model conversion tooling; use a separate virtual environment if dependency
+# constraints conflict with the main app.
+optimum-intel[openvino]>=1.25

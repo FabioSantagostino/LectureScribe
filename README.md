@@ -1,30 +1,34 @@
-# LectureScribe
+# LectureScribe v1.5.0 — DEVELOPMENT CANDIDATE (NOT RELEASED)
 
-A privacy-conscious **Windows desktop lecture transcriber**. Built with CustomTkinter, yt-dlp, faster-whisper and an optional OpenAI transcription API. The UI is available in Italian and English.
+LectureScribe accepts Webex playback links, HLS URLs and local media in the same field and queue. Version 1.5.0 is a release candidate.
 
-## Version 1.2.0 — release candidate
+## Webex recording downloads
 
-This version is **not yet verified end-to-end on Windows**. Test downloads, session handling, transcription, updating, and the packaged EXE before publishing a stable tag.
+1. Paste the original Webex `/playback` link. LectureScribe opens the authorized Webex player in a dedicated browser and watches for a successful `.m3u8` response.
+2. If the recording needs sign-in or playback needs a click, choose **LectureScribe Webex** when prompted. Complete any university SSO/MFA or recording password prompt in the browser window. Start playback, then click **Continue** in LectureScribe.
+3. LectureScribe sends the observed playlist URL, including its original query string, to yt-dlp. If discovery fails or the playlist can't be downloaded, it can retry the original link through yt-dlp, using the authorized session or the browser/cookie-file method selected in the authentication dialog.
+4. If you already have an authorized HLS URL, paste it directly. An expired link can be replaced with a fresh one or with the original Webex playback link.
 
-### What's new
+Webex discovery uses installed Google Chrome or Playwright Chromium. For source installations without Chrome, install Chromium with `python -m playwright install chromium` in the application environment. The Windows candidate includes the Playwright driver and uses installed Chrome or an existing compatible Playwright Chromium installation.
 
-- **Batch queue**: use the normal source field and/or add multiple files and recording URLs. Jobs are processed sequentially; one failed item doesn't stop the rest. Existing cancellation applies to the batch.
-- **Markdown export**: local transcription creates `.txt`, `.srt`, and `.md` files. Cloud creates `.txt` and `.md` with approximate chunk markers, **not** a fabricated SRT.
-- **Intel CPU tuning**: retains efficient CTranslate2 INT8 CPU inference and cached Whisper models; the optional `benchmark_intel.py` compares thread counts on your own sample and saves the fastest setting. **Intel GPU/NPU OpenVINO is not integrated in this build**; it requires a separately validated backend.
-- **In-app updates**: uses GitHub's release API to find a newer version, downloads the official Windows ZIP, checks the SHA-256 digest returned by GitHub, stages an EXE and installs only after explicit confirmation. Works with the *packaged EXE* on a writable install path. The Windows release workflow embeds its repository address automatically. Source runs can enter `owner/repo` in Advanced Settings. No auto-update silently in the background.
-- **Remember Webex authentication**: opt in when selecting a browser or Netscape cookie file. Saves the **browser identity or path to an existing cookie export**, *not its cookie values*. On later private recording downloads, the chosen method is retried automatically; the dialog reappears only if access fails. One selection can also be reused across batch items. **Samsung Internet's encrypted cookie store is not directly supported**, so it can't refresh expired cookies automatically; you must re-export/update the file when the Webex session expires.
-- **Cloud transcription (optional)**: explicit OpenAI API opt-in with `gpt-transcribe`. Session-only API key input, never saved to settings or logs. Requires your own OpenAI API account and credits; **ChatGPT Plus does not include API credits**. Media audio is converted to 7-minute compressed MP3 chunks and uploaded to OpenAI, with approximate chunk-start markers. Transcript privacy differs from local mode. You can choose Local at any time.
+The dedicated browser profile lives under `%APPDATA%\LectureScribe\webex_browser_profile`. Use **Advanced → Disconnect Webex** to clear the session when no job is running. The HLS handoff carries the observed URL in memory. The original-link fallback can use Webex cookies in memory. Keep recording URLs, tokenized playlists, browser profiles and cookie exports private.
 
-### Existing features retained
+## Experimental automatic Intel acceleration
 
-- Light/dark/system theme and responsive, compact CustomTkinter layout
-- Italian/English UI and automated choice of language-compatible models
-- Three understandable local profiles: Fast (`small`/`small.en`), Balanced (`turbo`), Highest quality (`large-v3`)
-- Video filename/title used automatically, optional custom name
-- Original Webex links via yt-dlp, optional authorized browser cookies, Samsung exported Netscape cookies
-- Separate transcript and retained-download directories; originals are never automatically deleted
-- Progress indicators, cooperative cancellation, diagnostic codes without URLs or cookie contents
-- HLS URLs, existing local video/audio files, TXT/SRT/Markdown exports
+No CPU/GPU/NPU selector is exposed. LectureScribe checks for **exactly matching** converted OpenVINO IR models, probes compatible devices, benchmarks a short speech sample and chooses the fastest supported device. If OpenVINO is absent, the model fails to compile, or the CPU wins, it uses the existing `faster-whisper` CPU backend. A benchmark on a 12-second sample does **not** guarantee the fastest results for an entire lecture. Devices are selected, not automatically run simultaneously.
+
+In a **separate conversion environment**, install `requirements-accelerated.txt` and convert a model once:
+
+```powershell
+python -m pip install -r requirements-accelerated.txt
+python prepare_openvino.py fast
+# or: python prepare_openvino.py balanced
+# or: python prepare_openvino.py accurate
+```
+
+The converted model is saved under `%APPDATA%\LectureScribe\openvino_models`. The full target model must have a compatible OpenVINO GenAI export; conversion can fail for a particular architecture or version. This runtime is **optional**: for source runs also install `openvino-genai` in LectureScribe's application environment. The published PyInstaller binary does not yet bundle the optional OpenVINO runtime, so **do not advertise GPU/NPU acceleration as working in the distributed EXE until a Windows build with that runtime is tested**. Compiling a model on NPU can require substantial time and updated Intel NPU drivers. Some Whisper IRs run on GPU but not NPU.
+
+Use `python -m unittest discover -s tests -p 'test_v15.py' -v` for the isolated v1.5 security/model tests. For a real check, inspect `%APPDATA%\LectureScribe\diagnostics.log` for `OPENVINO_ACTIVE_GPU` or `OPENVINO_ACTIVE_NPU`. The mere presence of a GPU/NPU in Device Manager does not prove it was used.
 
 ## Installation (Windows 10/11)
 
@@ -52,9 +56,9 @@ Use **+ Files** to add multiple local files or **+ Link** for recording URLs. Th
 
 ## Cloud mode / privacy
 
-Choose **Cloud · OpenAI API**, paste your API key (for this session only), and confirm every batch before upload. Cloud audio is split into MP3 chunks of up to 7 minutes, designed to stay below the provider's 25 MB upload limit. The service may charge usage. This is a direct transcription API, **not ChatGPT chat or an autonomous agent**. The app does not offer an unauthenticated free service: such providers have no dependable privacy/uptime guarantee. The cloud option currently does **not** provide accurate word/segment timestamps, so cloud SRT export is intentionally disabled.
+Choose **Cloud**, select Groq, OpenAI or Gemini, and confirm each batch before upload. Manage labeled API credentials through **Manage API keys**. Windows Credential Manager stores the secrets. LectureScribe compresses the audio into bounded MP3 chunks with a short overlap and stores private transcript checkpoints for resuming interrupted cloud jobs. Cloud exports TXT and Markdown with approximate chunk timestamps. Local Whisper exports TXT, Markdown and SRT.
 
-The local mode does not transmit your lecture to a transcription service. Online recording retrieval and model downloads may still access their providers.
+Local transcription runs on the device. The recording provider and model host are contacted when downloading media or models.
 
 ## Samsung Internet on Windows
 
@@ -68,17 +72,13 @@ Open **Advanced → Updates → Check for updates**. The packaged EXE knows the 
 
 - Edit source; run `python -m unittest discover -s tests -v`.
 - Compile through `.github/workflows/release.yml`; `workflow_dispatch` compiles without publishing.
-- **Only after real Windows tests**, tag `v1.2.0` once and push it. GitHub Actions uploads the Windows ZIP to the release.
+- **Only after release verification**, tag the verified version and push it. GitHub Actions uploads the Windows ZIP to the release.
 - Do not upload lectures, transcripts, sessions/cookie files, API keys, or signed Webex URLs.
 
-## Limitations
+## Candidate verification
 
-- Full Samsung browser authentication extraction is not implemented, only remembered authorized cookie-file reuse.
-- OpenVINO GPU/NPU acceleration is not integrated; this release tunes CPU thread scheduling only.
-- Cloud timestamps are approximations based on chunk start; SRT would be misleading.
-- The updater requires EXE mode and a writable installation directory; it will not elevate privileges or modify protected directories.
-- GitHub Actions building successfully is **not** proof that every runtime path works. Test on an actual Windows laptop or a clean VM.
+Run `python -m unittest discover -s tests -v` locally. Before tagging, verify the EXE on Windows, a private Webex recording through SSO/MFA and transcription, cloud jobs using real provider credentials, and the optional OpenVINO runtime using prepared models and Intel hardware.
 
 ## License
 
-MIT for LectureScribe source; all libraries, models and online providers retain their own terms.
+MIT for LectureScribe source. Libraries, models and online providers retain their own terms.

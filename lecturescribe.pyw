@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+from io import StringIO
 import os
 import re
 import sys
@@ -16,10 +17,17 @@ from queue import Empty, Queue
 from tkinter import filedialog, messagebox
 import customtkinter as ctk
 
+import imageio_ffmpeg
 import yt_dlp
+from urllib.parse import urlsplit
 from faster_whisper import WhisperModel
 from yt_dlp.utils import DownloadError
 from lecturescribe_credentials import Vault
+from lecturescribe_webex import (
+    WebexBrowserError, add_to_ytdlp_cookiejar, inspect_webex,
+    is_webex_playback, logout as logout_webex_profile,
+)
+from lecturescribe_openvino import (transcribe_if_available, OpenVINOUnavailable)
 from lecturescribe_providers import MODELS, verify_key, transcribe_long, ProviderError, available_gemini_models
 from lecturescribe_updates import VERSION, fetch_release, stage_update, launch_installer, version_tuple, run_update_mode
 try:
@@ -31,6 +39,9 @@ OFFICIAL_REPO = "FabioSantagostino/LectureScribe"
 APP = "LectureScribe"
 CONFIG_DIR = Path(os.getenv("APPDATA", str(Path.home()))) / APP
 CONFIG_FILE = CONFIG_DIR / "settings.json"
+WEBEX_PROFILE = CONFIG_DIR / "webex_browser_profile"
+OV_MODELS = CONFIG_DIR / "openvino_models"
+OV_BENCH = CONFIG_DIR / "openvino_benchmarks"
 DEFAULT_DIR = Path.home() / "Documents" / APP
 EXTS = {".mp4", ".mkv", ".webm", ".mov", ".mp3", ".m4a", ".wav", ".flac", ".aac"}
 QUALITY_CHOICES = ("fast", "balanced", "accurate")
@@ -143,6 +154,8 @@ class App:
         self.auth_event = threading.Event()
         self.auth_response = None
         self.auth_dialog = None
+        self.webex_login_event = threading.Event()
+        self.webex_login_approved = False
         self.running = False
         self.close_when_done = False
         self.model_instance = None
@@ -282,7 +295,7 @@ class App:
             return None
         # Precision touchpads can emit dozens of tiny deltas. Scroll in
         # pixels rather than Tk units, which are very small on high-DPI PCs.
-        pixels = min(90.0, max(4.0, abs(delta) * 0.45))
+        pixels = min(220.0, max(12.0, abs(delta) * 1.25))
         pos = canvas.yview()[0] * scrollable
         pos -= pixels if delta > 0 else -pixels
         canvas.yview_moveto(max(0.0, min(1.0, pos / scrollable)))
@@ -649,6 +662,9 @@ class App:
             lambda: self.open_folder(Path(self.transcripts_dir.get())), 148).pack(side="left", padx=(0, 7))
         self.secondary_button(actions, self.t("logs"),
             lambda: self.open_folder(CONFIG_DIR), 140).pack(side="left")
+        self.secondary_button(advanced_body,
+            "Disconnetti Webex / Sign out of Webex",
+            self.clear_webex_session, 250).pack(anchor="w", padx=15, pady=(5, 9))
         self.text(advanced_body, self.t("updates") + " · v" + VERSION, 11, True).pack(anchor="w", padx=15, pady=(12, 0))
         self.secondary_button(advanced_body, self.t("check_update"), self.check_updates, 180).pack(anchor="w", padx=15, pady=7)
         self.text(advanced_body, "Official: " + OFFICIAL_REPO, 10, muted=True).pack(anchor="w", padx=15, pady=(1, 12))
@@ -934,6 +950,8 @@ class App:
                     self.progress.set(self.progress_value / 100)
                 elif kind == "auth":
                     self.auth_popup()
+                elif kind == "webex_login":
+                    self.webex_login_popup()
                 elif kind == "update_found":
                     self.confirm_update(value)
                 elif kind == "update_none":
@@ -1037,6 +1055,7 @@ class App:
             return
         self.stop_event.set()
         self.auth_event.set()
+        self.webex_login_event.set()
         if self.auth_dialog is not None and self.auth_dialog.winfo_exists():
             self.auth_dialog.destroy()
         self.auth_dialog = None
@@ -1061,10 +1080,16 @@ class App:
         panel = ctk.CTkFrame(dlg, fg_color="transparent")
         panel.pack(fill="both", expand=True, padx=20, pady=18)
         self.text(panel, self.t("auth_title"), 17, True).pack(anchor="w", pady=(0,8))
-        self.text(panel, self.t("auth_explain"), 11, muted=True, wraplength=415,
+        explanation = (
+            "Apri il player con LectureScribe oppure usa una sessione o un file cookie autorizzato."
+            if self.ui_language.get() == "it" else
+            "Open the player in LectureScribe or use an authorized browser session or cookie file."
+        )
+        self.text(panel, explanation, 11, muted=True, wraplength=415,
                   justify="left").pack(anchor="w", pady=(0,13))
         installed = browser_candidates()
-        choices = list(installed) + [self.t("samsung"), self.t("cookies")]
+        dedicated = "LectureScribe Webex"
+        choices = [dedicated, *installed, self.t("samsung"), self.t("cookies")]
         choice = ctk.StringVar(value=choices[0])
         ctk.CTkOptionMenu(panel, variable=choice, values=choices, height=36,
             fg_color=c["inset"], button_color=c["inset"],
@@ -1079,7 +1104,9 @@ class App:
             self.auth_dialog = None
         def confirm():
             key = choice.get()
-            if key in installed:
+            if key == dedicated:
+                resolve(("persistent",))
+            elif key in installed:
                 resolve(installed[key])
             else:
                 path = filedialog.askopenfilename(parent=dlg,
@@ -1095,6 +1122,63 @@ class App:
         self.secondary_button(row, self.t("cancel"), lambda: resolve(None), 110).pack(side="left", padx=(8,0))
         dlg.protocol("WM_DELETE_WINDOW", lambda: resolve(None))
 
+    def clear_webex_session(self):
+        if self.running:
+            messagebox.showwarning(APP, "Complete or cancel current job first")
+            return
+        if not messagebox.askyesno(APP, "Remove saved LectureScribe Webex session?"):
+            return
+        try:
+            logout_webex_profile(WEBEX_PROFILE)
+            self.auth_cached_choice = None
+            if self.auth_saved and self.auth_saved[0] == "persistent":
+                self.auth_saved = None
+                self.save_config()
+            self.log("WEBEX_SESSION_CLEARED")
+        except OSError:
+            messagebox.showerror(APP, "Close the Webex browser window and try again")
+
+    def webex_login_popup(self):
+        dlg = ctk.CTkToplevel(self.root)
+        dlg.title("LectureScribe · Webex")
+        dlg.geometry("490x250")
+        dlg.transient(self.root)
+        dlg.grab_set()
+        self.auth_dialog = dlg
+        pane = ctk.CTkFrame(dlg)
+        pane.pack(fill="both", expand=True, padx=16, pady=16)
+        self.text(pane, "Apri la registrazione nel browser di LectureScribe." if self.ui_language.get() == "it"
+                  else "Open the recording in the LectureScribe browser.", 13, True).pack(pady=10)
+        self.text(pane, ("Completa l'accesso, avvia il video e premi Continua. La sessione sarà riutilizzata."
+                  if self.ui_language.get() == "it" else
+                  "Sign in, start playback and click Continue. The session will be reused."),
+                  11, wraplength=410, justify="left").pack(padx=10, pady=8)
+        def finish(approved):
+            self.webex_login_approved = approved
+            self.webex_login_event.set()
+            if dlg.winfo_exists():
+                dlg.destroy()
+            self.auth_dialog = None
+        self.secondary_button(pane, "Continua / Continue", lambda: finish(True), 180).pack(pady=8)
+        self.secondary_button(pane, "Annulla / Cancel", lambda: finish(False), 180).pack()
+        dlg.protocol("WM_DELETE_WINDOW", lambda: finish(False))
+
+    def inspect_webex_session(self, url, profile, interactive=False):
+        def on_ready():
+            self.webex_login_event.clear()
+            self.webex_login_approved = False
+            self.send("webex_login")
+            while not self.webex_login_event.wait(.2):
+                self.check_cancel()
+            self.check_cancel()
+            if not self.webex_login_approved:
+                raise JobCancelled()
+        return inspect_webex(
+            profile, url, interactive=interactive,
+            on_browser_ready=on_ready if interactive else None,
+            check_cancel=self.check_cancel,
+        )
+
     def download(self, url, folder):
         logger = PrivateLogger()
         def hook(data):
@@ -1105,98 +1189,153 @@ class App:
             if total:
                 self.send("progress", min(35, 35 * data.get("downloaded_bytes", 0) / total))
         base_opts = {
-            "outtmpl": str(folder / "recording.%(ext)s"),
             "noplaylist": True,
+            "ffmpeg_location": imageio_ffmpeg.get_ffmpeg_exe(),
+            "socket_timeout": 15,
             "concurrent_fragment_downloads": 4,
             "retries": 3,
             "fragment_retries": 3,
+            "skip_unavailable_fragments": False,
             "progress_hooks": [hook],
             "logger": logger,
             "quiet": True,
             "no_warnings": True,
             "noprogress": True,
         }
-        def attempt(extra=None):
-            opts = {**base_opts, **(extra or {})}
+        attempt_number = 0
+        playback = is_webex_playback(url)
+        direct_hls = urlsplit(url).path.lower().endswith(".m3u8")
+
+        def attempt(target=url, extra=None, browser_cookies=()):
+            nonlocal attempt_number
+            self.check_cancel()
+            logger.errors.clear()
+            attempt_number += 1
+            destination = folder / str(attempt_number)
+            destination.mkdir()
+            opts = {**base_opts, **(extra or {}), "outtmpl": str(destination / "recording.%(ext)s")}
             with yt_dlp.YoutubeDL(opts) as dl:
-                result = dl.extract_info(url, download=True)
-                return result if isinstance(result, dict) else {}
+                if browser_cookies:
+                    add_to_ytdlp_cookiejar(dl, browser_cookies)
+                result = dl.extract_info(target, download=True)
+            self.check_cancel()
+            candidates = [p for p in destination.iterdir() if p.is_file() and p.suffix.lower() in EXTS]
+            if not candidates:
+                raise DownloadError("no_media")
+            metadata = result if isinstance(result, dict) else {}
+            self.log("DOWNLOAD_FINISHED")
+            self.send("progress", 35)
+            return max(candidates, key=lambda p: p.stat().st_size), (metadata.get("title") or metadata.get("fulltitle"))
+
+        def browser_attempt(profile, *, interactive=False):
+            playlist, cookies = self.inspect_webex_session(url, profile, interactive)
+            if playlist:
+                self.log("WEBEX_HLS_FOUND")
+                try:
+                    return attempt(playlist)
+                except DownloadError:
+                    self.log("WEBEX_HLS_DOWNLOAD_FAILED")
+            if cookies:
+                return attempt(browser_cookies=cookies)
+            raise DownloadError("no_media")
+
+        def authorized_attempt(selection, *, interactive=False):
+            method, *details = selection
+            if method == "persistent":
+                return browser_attempt(WEBEX_PROFILE, interactive=interactive)
+            identity, *profile = details
+            if method == "file":
+                # yt-dlp can update its cookie file on close. Use an in-memory copy.
+                contents = Path(identity).read_text(encoding="utf-8-sig")
+                return attempt(extra={"cookiefile": StringIO(contents)})
+            browser_options = (identity, profile[0]) if profile and profile[0] else (identity,)
+            return attempt(extra={"cookiesfrombrowser": browser_options})
+
         self.log("DOWNLOAD_STARTED")
         self.send("status", self.t("downloading"))
+        if playback and not WEBEX_PROFILE.exists():
+            try:
+                return browser_attempt(None)
+            except (DownloadError, WebexBrowserError):
+                self.log("WEBEX_ANONYMOUS_HLS_UNAVAILABLE")
+        elif playback:
+            try:
+                return browser_attempt(WEBEX_PROFILE)
+            except (DownloadError, WebexBrowserError):
+                self.log("WEBEX_SAVED_SESSION_UNAVAILABLE")
         try:
-            metadata = attempt()
+            return attempt()
         except DownloadError as exc:
             self.check_cancel()
             error = (str(exc) + " " + " ".join(logger.errors)).lower()
-            if not any(token in error for token in AUTH_WORDS):
-                self.log("DOWNLOAD_FAILED_NON_AUTH")
+            if direct_hls or (not playback and not any(token in error for token in AUTH_WORDS)):
+                self.log("DOWNLOAD_FAILED")
                 raise RuntimeError("download_failed") from None
-            self.log("AUTH_REQUIRED")
-            cached = self.auth_cached_choice or (self.auth_saved if self.remember_auth.get() else None)
-            if cached:
-                try:
-                    if cached[0] == "file" and not Path(cached[1]).is_file():
-                        raise OSError("Cookie file missing")
-                    extra = {"cookiefile": cached[1]} if cached[0] == "file" else {
-                        "cookiesfrombrowser": (cached[1], cached[2]) if cached[2] else (cached[1],)}
-                    metadata = attempt(extra)
-                    self.check_cancel()
-                    candidates = [p for p in folder.iterdir() if p.is_file() and p.suffix.lower() in EXTS]
-                    if not candidates:
-                        raise RuntimeError("no_media")
-                    self.send("progress", 35)
-                    return max(candidates, key=lambda p: p.stat().st_size), (metadata.get("title") or metadata.get("fulltitle"))
-                except JobCancelled:
-                    raise
-                except Exception:
-                    self.log("CACHED_AUTH_FAILED")
-                    self.auth_cached_choice = None
-                    self.auth_saved = None
-            self.auth_response = None
-            self.auth_event.clear()
-            self.send("auth")
-            self.auth_event.wait()
-            self.check_cancel()
-            if self.auth_response is None:
-                raise JobCancelled()
-            selection = self.auth_response
-            self.auth_cached_choice = selection
-            if self.remember_auth.get():
-                self.auth_saved = list(selection)
-                self.save_config()
-            if selection[0] == "file":
-                extra = {"cookiefile": selection[1]}
-            else:
-                extra = {"cookiesfrombrowser": (selection[1], selection[2]) if selection[2] else (selection[1],)}
+
+        cached = self.auth_cached_choice or (self.auth_saved if self.remember_auth.get() else None)
+        if cached and not (playback and cached[0] == "persistent"):
             try:
-                metadata = attempt(extra)
+                return authorized_attempt(cached)
+            except JobCancelled:
+                raise
             except Exception:
-                self.check_cancel()
-                self.log("AUTH_RETRY_FAILED")
-                raise RuntimeError("auth_failed") from None
+                self.log("CACHED_AUTH_FAILED")
+                self.auth_cached_choice = None
+                self.auth_saved = None
+
+        self.auth_response = None
+        self.auth_event.clear()
+        self.send("auth")
+        while not self.auth_event.wait(.2):
+            self.check_cancel()
         self.check_cancel()
-        candidates = [p for p in folder.iterdir() if p.is_file() and p.suffix.lower() in EXTS]
-        if not candidates:
-            raise RuntimeError("no_media")
-        self.log("DOWNLOAD_FINISHED")
-        self.send("progress", 35)
-        title = metadata.get("title") or metadata.get("fulltitle")
-        return max(candidates, key=lambda p: p.stat().st_size), title
+        if self.auth_response is None:
+            raise JobCancelled()
+        selection = self.auth_response
+        try:
+            downloaded = authorized_attempt(selection, interactive=selection[0] == "persistent")
+        except JobCancelled:
+            raise
+        except Exception:
+            self.check_cancel()
+            self.log("AUTH_RETRY_FAILED")
+            raise RuntimeError("auth_failed") from None
+        self.auth_cached_choice = selection
+        if self.remember_auth.get():
+            self.auth_saved = list(selection)
+            self.save_config()
+        return downloaded
 
     def transcribe(self, job, media, network_media):
         self.check_cancel()
         self.send("status", self.t("loading"))
-        if self.model_instance is None or self.model_name != job["model"]:
-            try:
-                self.model_instance = WhisperModel(job["model"], device="cpu", compute_type="int8", cpu_threads=self.cpu_threads)
-                self.model_name = job["model"]
-            except Exception:
-                self.log("MODEL_LOAD_FAILED")
-                raise RuntimeError("model_error") from None
-        self.check_cancel()
         language = None if job["spoken"] == "auto" else job["spoken"]
-        segments, info = self.model_instance.transcribe(str(media), language=language, beam_size=5, vad_filter=True, condition_on_previous_text=True)
-        duration = info.duration or 0
+        ov_result = None
+        try:
+            ov_result = transcribe_if_available(
+                media, job["model"], language, OV_MODELS, OV_BENCH,
+                cancelled=self.stop_event.is_set)
+        except InterruptedError:
+            raise JobCancelled()
+        except Exception:
+            self.log("OPENVINO_FALLBACK_CPU")
+        if ov_result:
+            from types import SimpleNamespace
+            items, device = ov_result
+            self.log("OPENVINO_ACTIVE_" + device)
+            segments = (SimpleNamespace(start=a, end=b, text=t) for a,b,t in items)
+            duration = items[-1][1] if items else 0
+        else:
+            if self.model_instance is None or self.model_name != job["model"]:
+                try:
+                    self.model_instance = WhisperModel(job["model"], device="cpu", compute_type="int8", cpu_threads=self.cpu_threads)
+                    self.model_name = job["model"]
+                except Exception:
+                    self.log("MODEL_LOAD_FAILED")
+                    raise RuntimeError("model_error") from None
+            self.check_cancel()
+            segments, info = self.model_instance.transcribe(str(media), language=language, beam_size=5, vad_filter=True, condition_on_previous_text=True)
+            duration = info.duration or 0
         folder = job["transcripts"]
         txt_path, srt_path = folder / (job["name"] + ".txt"), folder / (job["name"] + ".srt")
         count = 0

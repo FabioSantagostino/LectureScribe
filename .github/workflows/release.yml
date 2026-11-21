@@ -30,13 +30,13 @@ jobs:
         run: |
           Set-Content -Path lecturescribe_build.py -Value "REPO = '${{ github.repository }}'" -Encoding utf8
       - name: Verify syntax
-        run: python -m py_compile lecturescribe.pyw lecturescribe_cloud.py lecturescribe_updates.py benchmark_intel.py
+        run: python -m py_compile lecturescribe.pyw lecturescribe_cloud.py lecturescribe_updates.py benchmark_intel.py lecturescribe_providers.py lecturescribe_credentials.py lecturescribe_webex.py lecturescribe_openvino.py prepare_openvino.py
       - name: Service self-tests
         run: python -m unittest discover -s tests -v
       - name: Build EXE
         shell: pwsh
         run: |
-          python -m PyInstaller --noconfirm --clean --onefile --windowed --name LectureScribe --collect-all faster_whisper --collect-all ctranslate2 --collect-all av --collect-all yt_dlp --collect-all customtkinter --collect-all imageio_ffmpeg --collect-all requests lecturescribe.pyw
+          python -m PyInstaller --noconfirm --clean --onefile --windowed --name LectureScribe --collect-all faster_whisper --collect-all ctranslate2 --collect-all av --collect-all yt_dlp --collect-all customtkinter --collect-all imageio_ffmpeg --collect-all requests --collect-all keyring --collect-all google.genai --collect-all playwright lecturescribe.pyw
           if (!(Test-Path 'dist/LectureScribe.exe')) { throw 'EXE missing' }
       - name: Package download
         shell: pwsh
