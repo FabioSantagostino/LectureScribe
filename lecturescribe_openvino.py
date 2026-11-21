@@ -228,6 +228,8 @@ def transcribe_on_device(media, language, pipe, device, cancelled, on_status=lam
                     text = str(c.text).strip()
                     if text:
                         output.append((max(abs_start, accepted_until), abs_end, text))
+        if not output:
+            raise OpenVINOUnavailable('EMPTY_TRANSCRIPTION')
         return output
 
 

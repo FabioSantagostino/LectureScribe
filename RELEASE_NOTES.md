@@ -1,6 +1,6 @@
 # LectureScribe v1.5.2
 
-- **Correzione NPU.** Con lingua esplicita, LectureScribe invia a Whisper blocchi più brevi sulla NPU e riprova sulla GPU se la cache del decoder si esaurisce. Con lingua automatica, usa GPU o CPU per evitare risultati incompleti su modelli NPU interessati.
+- **Correzione NPU.** Con lingua esplicita, LectureScribe invia a Whisper blocchi più brevi sulla NPU e riprova sulla GPU se la cache del decoder si esaurisce. Con lingua automatica, usa GPU o CPU. Se OpenVINO non restituisce testo, l’app riprova con Whisper su CPU.
 
 ## Novità introdotte in v1.5.1
 
