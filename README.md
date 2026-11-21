@@ -57,6 +57,8 @@ Dalla v1.5.1 il runtime OpenVINO è incluso nell’EXE Windows. In modalità **L
 
 L’app confronta i dispositivi compatibili su un breve campione, poi mostra durante la trascrizione **OpenVINO GPU**, **OpenVINO NPU** o **CPU**. La CPU resta disponibile se è più veloce nel confronto, se un modello non è compatibile o se manca un acceleratore. Durante la trascrizione cloud l'inferenza viene svolta dal provider.
 
+Per una coda di almeno due file locali, l’app prova anche a elaborare due registrazioni contemporaneamente su **GPU + NPU**. Usa questa modalità quando i due acceleratori sono compatibili e il confronto sui campioni indica che insieme sono almeno il 10% più veloci del miglior dispositivo singolo. La verifica iniziale include il caricamento dei modelli. Se un acceleratore si interrompe, i lavori rimanenti possono proseguire in serie.
+
 Il log diagnostico indica il dispositivo usato (`OPENVINO_ACTIVE_GPU`, `OPENVINO_ACTIVE_NPU`) o il motivo del ritorno alla CPU (voci `OPENVINO_FALLBACK_…`). Per i requisiti dei driver, consulta la [documentazione OpenVINO per NPU](https://docs.openvino.ai/2026/openvino-workflow-generative/inference-with-genai/inference-with-genai-on-npu.html).
 
 Per usare un modello preparato da sorgente puoi ancora installare `requirements-accelerated.txt` in un ambiente separato ed eseguire `python prepare_openvino.py balanced` (o `fast` / `accurate`).

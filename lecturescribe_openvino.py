@@ -6,6 +6,7 @@ substitute a smaller model. If unavailable or slower, use faster-whisper CPU.
 from __future__ import annotations
 
 import json
+from concurrent.futures import ThreadPoolExecutor
 import subprocess
 import tempfile
 import time
@@ -172,6 +173,11 @@ def transcribe_if_available(media: Path, model: str, language: str | None,
             raise OpenVINOUnavailable('CPU_BENCHMARK')
         if pipe is None:
             pipe = make_pipe(model_dir, device)
+    return transcribe_on_device(media, language, pipe, device, cancelled, on_status), device
+
+
+def transcribe_on_device(media, language, pipe, device, cancelled, on_status=lambda phase: None):
+    with tempfile.TemporaryDirectory(prefix='lecturescribe_audio_ov_') as temp:
         full_path = Path(temp) / 'full.wav'
         convert_audio(media, full_path)
         if cancelled():
@@ -201,4 +207,52 @@ def transcribe_if_available(media: Path, model: str, language: str | None,
                     text = str(c.text).strip()
                     if text:
                         output.append((max(abs_start, accepted_until), abs_end, text))
-        return output, device
+        return output
+
+
+def prepare_parallel(media, model, language, models_root, cancelled, on_status):
+    available = device_list()
+    if not {'GPU', 'NPU'}.issubset(available):
+        return None
+    model_dir = resolve_model(models_root, model, on_status)
+    on_status('ov_benchmark')
+    with tempfile.TemporaryDirectory(prefix='lecturescribe_ov_sample_') as temp:
+        samples = []
+        for index, source in enumerate(media):
+            if cancelled():
+                raise InterruptedError()
+            path = Path(temp) / f'{index}.wav'
+            convert_audio(source, path, seconds=30)
+            samples.append(read_audio(path))
+
+    def run(pipe, sample):
+        if cancelled():
+            raise InterruptedError()
+        return bool(str(generate(pipe, sample, language)).strip())
+
+    pipes, serial_times = {}, []
+    for device in available:
+        if cancelled():
+            raise InterruptedError()
+        try:
+            pipe = make_pipe(model_dir, device)
+            # Warm up inference before timing the two requests.
+            run(pipe, samples[0])
+            start = time.perf_counter()
+            results = [run(pipe, sample) for sample in samples]
+            if not all(results):
+                return None
+            serial_times.append(time.perf_counter() - start)
+            if device in ('GPU', 'NPU'):
+                pipes[device] = pipe
+        except OpenVINOUnavailable:
+            if device != 'CPU':
+                return None
+    with ThreadPoolExecutor(max_workers=2) as workers:
+        start = time.perf_counter()
+        futures = [workers.submit(run, pipe, sample)
+                   for pipe, sample in zip(pipes.values(), samples)]
+        results = [future.result() for future in futures]
+        if all(results) and time.perf_counter() - start < min(serial_times) * .90:
+            return pipes
+    return None

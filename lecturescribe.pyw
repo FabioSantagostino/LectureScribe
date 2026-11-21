@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import json
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
+from types import SimpleNamespace
 import os
 import re
 import sys
@@ -22,7 +24,9 @@ from faster_whisper import WhisperModel
 from yt_dlp.utils import DownloadError
 from lecturescribe_credentials import Vault
 from lecturescribe_webex import WebexBrowserError, capture_playlist, is_webex_playback
-from lecturescribe_openvino import (transcribe_if_available, OpenVINOUnavailable)
+from lecturescribe_openvino import (
+    OpenVINOUnavailable, prepare_parallel, transcribe_if_available, transcribe_on_device,
+)
 from lecturescribe_providers import MODELS, verify_key, transcribe_long, ProviderError, available_gemini_models
 from lecturescribe_updates import VERSION, fetch_release, stage_update, launch_installer, version_tuple, run_update_mode
 try:
@@ -1178,7 +1182,6 @@ class App:
             self.check_cancel()
             self.log("OPENVINO_FALLBACK_ERROR")
         if ov_result:
-            from types import SimpleNamespace
             items, device = ov_result
             backend = "OpenVINO " + device
             segments = (SimpleNamespace(start=a, end=b, text=t) for a,b,t in items)
@@ -1196,6 +1199,9 @@ class App:
             self.check_cancel()
             segments, info = self.model_instance.transcribe(str(media), language=language, beam_size=5, vad_filter=True, condition_on_previous_text=True)
             duration = info.duration or 0
+        return self.write_local_transcript(job, segments, duration, backend, network_media)
+
+    def write_local_transcript(self, job, segments, duration=0, backend="", network_media=False):
         folder = job["transcripts"]
         txt_path, srt_path = folder / (job["name"] + ".txt"), folder / (job["name"] + ".srt")
         count = 0
@@ -1216,7 +1222,8 @@ class App:
                     if duration:
                         start, portion = (35, 65) if network_media else (0, 100)
                         self.send("progress", start + min(1, segment.end / duration) * portion)
-                    self.send("status", f"{self.t('transcribing')} · {backend} · {millis(segment.end)}")
+                    if backend:
+                        self.send("status", f"{self.t('transcribing')} · {backend} · {millis(segment.end)}")
             self.check_cancel()
             completed = True
         finally:
@@ -1227,7 +1234,7 @@ class App:
         self.log("TRANSCRIPTION_FINISHED")
         return txt_path, srt_path
 
-    def resolve_name(self, job, media, metadata_title=None):
+    def resolve_name(self, job, media, metadata_title=None, reserved=()):
         desired = job["name"] or metadata_title or media.stem
         # Avoid generic filenames used internally for Webex downloads.
         if not job["name"] and (not desired or desired.lower() in {"recording", "video", "hls"}):
@@ -1235,37 +1242,118 @@ class App:
         base = clean_name(desired)
         folder, videos = job["transcripts"], job["videos"]
         name, num = base, 2
-        while (any((folder / f"{name}{sfx}").exists() for sfx in (".txt", ".srt", ".md", ".partial.txt", ".partial.srt", ".partial.md"))
+        while (name.casefold() in reserved or any((folder / f"{name}{sfx}").exists() for sfx in (".txt", ".srt", ".md", ".partial.txt", ".partial.srt", ".partial.md"))
                or any((videos / f"{name}{ext}").exists() for ext in EXTS)):
             name = f"{base}_{num}"
             num += 1
         job["name"] = name
 
     def worker_batch(self, job, sources):
-        failures = 0
+        jobs = []
         for index, source in enumerate(sources, start=1):
-            if self.stop_event.is_set():
-                self.send("cancelled")
-                return
-            current = dict(job)
-            current["source"] = source["source"]
+            current = dict(job, source=source["source"])
             if source.get("name"):
                 current["name"] = clean_name(source["name"])
             elif job["name"] and len(sources) > 1:
                 current["name"] = f"{job['name']}_{index:02}"
-            try:
-                self.process_one(current)
-                self.log("BATCH_ITEM_SUCCESS")
-            except JobCancelled:
-                self.send("cancelled")
-                return
-            except Exception as exc:
-                failures += 1
-                self.log("BATCH_ITEM_FAILED")
-                if isinstance(exc, RuntimeError) and str(exc) in WEBEX_ERRORS:
-                    self.send("webex_error", str(exc))
-            self.send("status", f"{index}/{len(sources)}")
+            jobs.append(current)
+
+        failures = 0
+        try:
+            if job["engine"] == "local" and len(jobs) >= 2:
+                jobs, failures = self.try_parallel_queue(jobs)
+            completed = len(sources) - len(jobs)
+            for current in jobs:
+                self.check_cancel()
+                try:
+                    self.process_one(current)
+                    self.log("BATCH_ITEM_SUCCESS")
+                except JobCancelled:
+                    raise
+                except Exception as exc:
+                    failures += 1
+                    self.log("BATCH_ITEM_FAILED")
+                    if isinstance(exc, RuntimeError) and str(exc) in WEBEX_ERRORS:
+                        self.send("webex_error", str(exc))
+                completed += 1
+                self.send("status", f"{completed}/{len(sources)}")
+        except (JobCancelled, InterruptedError):
+            self.send("cancelled")
+            return
         self.send("done_batch", (len(sources), failures, str(job['transcripts'])))
+
+    def try_parallel_queue(self, jobs):
+        media = [Path(job["source"]) for job in jobs]
+        if any(job["source"].startswith(("http://", "https://")) or not path.is_file()
+               for job, path in zip(jobs, media)):
+            return jobs, 0
+        language = None if jobs[0]["spoken"] == "auto" else jobs[0]["spoken"]
+        try:
+            pipes = prepare_parallel(
+                media[:2], jobs[0]["model"], language, OV_MODELS,
+                self.stop_event.is_set, lambda phase: self.send("status", self.t(phase)),
+            )
+        except InterruptedError:
+            raise
+        except Exception:
+            self.log("OPENVINO_QUEUE_FALLBACK")
+            return jobs, 0
+        if not pipes:
+            return jobs, 0
+
+        reserved = set()
+        for current, path in zip(jobs, media):
+            self.resolve_name(current, path, reserved=reserved)
+            reserved.add(current["name"].casefold())
+        remaining = iter(enumerate(media))
+        in_progress, retry = {}, []
+        failures = completed = 0
+        self.log("OPENVINO_QUEUE_GPU_NPU")
+        self.send("status", f"{self.t('transcribing')} · OpenVINO GPU + NPU")
+        with ThreadPoolExecutor(max_workers=2) as workers:
+            def assign(device):
+                self.check_cancel()
+                item = next(remaining, None)
+                if item is not None:
+                    index, path = item
+                    future = workers.submit(
+                        transcribe_on_device, path, language, pipes[device],
+                        device, self.stop_event.is_set,
+                    )
+                    in_progress[future] = (device, index)
+
+            for device in pipes:
+                assign(device)
+            while in_progress:
+                self.check_cancel()
+                ready, _ = wait(in_progress, timeout=.2, return_when=FIRST_COMPLETED)
+                for future in ready:
+                    device, index = in_progress.pop(future)
+                    try:
+                        items = future.result()
+                    except InterruptedError:
+                        raise
+                    except Exception:
+                        retry.append(index)
+                        self.log("OPENVINO_QUEUE_RETRY_" + device)
+                        continue
+                    assign(device)
+                    try:
+                        segments = (SimpleNamespace(start=a, end=b, text=text) for a, b, text in items)
+                        txt, _ = self.write_local_transcript(jobs[index], segments)
+                        self.write_markdown(txt, jobs[index]["name"])
+                        self.log("BATCH_ITEM_SUCCESS")
+                    except JobCancelled:
+                        raise
+                    except Exception:
+                        failures += 1
+                        self.log("BATCH_ITEM_FAILED")
+                    completed += 1
+                    self.send("progress", 100 * completed / len(jobs))
+                    self.send("status", f"OpenVINO GPU + NPU · {completed}/{len(jobs)}")
+
+        retry.extend(index for index, _ in remaining)
+        return [jobs[index] for index in sorted(retry)], failures
 
     def process_one(self, job):
         source = job["source"]
