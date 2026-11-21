@@ -8,6 +8,7 @@ from unittest.mock import MagicMock, Mock, patch
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
+from yt_dlp.utils import DownloadError
 from lecturescribe_webex import capture_playlist, is_webex_playback
 
 PLAYBACK = "https://campus.webex.com/recording/playback/example"
@@ -54,7 +55,7 @@ class WebexTests(unittest.TestCase):
             self.assertEqual(capture_playlist(PLAYBACK, check_cancel=Mock(), on_playback=callback), PLAYLIST)
         callback.assert_called_once()
 
-    def test_download_uses_the_resolved_url_without_browser_credentials(self):
+    def test_download_tries_original_url_without_opening_browser(self):
         app = SimpleNamespace(check_cancel=Mock(), send=Mock(), t=lambda key: key, log=Mock())
         for source_url in (PLAYBACK, PLAYLIST):
             with self.subTest(source_url=source_url), tempfile.TemporaryDirectory() as tmp:
@@ -69,5 +70,25 @@ class WebexTests(unittest.TestCase):
                         self.assertNotIn("cookiesfrombrowser", yt.call_args.args[0])
                 self.assertEqual(path.name, "recording.mp4")
                 self.assertEqual(title, "Lecture")
-                downloader.__enter__.return_value.extract_info.assert_called_once_with(PLAYLIST, download=True)
-                self.assertEqual(capture.call_count, int(source_url == PLAYBACK))
+                downloader.__enter__.return_value.extract_info.assert_called_once_with(source_url, download=True)
+                capture.assert_not_called()
+
+    def test_failed_webex_download_uses_extension_and_isolates_partial_files(self):
+        app = SimpleNamespace(check_cancel=Mock(), send=Mock(), t=lambda key: key, log=Mock())
+        with tempfile.TemporaryDirectory() as tmp:
+            folder = Path(tmp)
+            first, second = MagicMock(), MagicMock()
+            (folder / "recording.mp4").write_bytes(b"partial media")
+
+            def download_playlist(*args, **kwargs):
+                (folder / "hls" / "recording.mp4").write_bytes(b"complete")
+                return {"title": "Lecture"}
+
+            first.__enter__.return_value.extract_info.side_effect = DownloadError("unavailable")
+            second.__enter__.return_value.extract_info.side_effect = download_playlist
+            with patch.object(gui, "capture_playlist", return_value=PLAYLIST) as capture:
+                with patch.object(gui.yt_dlp, "YoutubeDL", side_effect=[first, second]):
+                    path, _ = gui.App.download(app, PLAYBACK, folder)
+            capture.assert_called_once()
+            second.__enter__.return_value.extract_info.assert_called_once_with(PLAYLIST, download=True)
+            self.assertEqual(path.read_bytes(), b"complete")

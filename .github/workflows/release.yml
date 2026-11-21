@@ -36,7 +36,7 @@ jobs:
       - name: Build EXE
         shell: pwsh
         run: |
-          python -m PyInstaller --noconfirm --clean --onefile --windowed --name LectureScribe --collect-all faster_whisper --collect-all ctranslate2 --collect-all av --collect-all yt_dlp --collect-all customtkinter --collect-all imageio_ffmpeg --collect-all requests --collect-all keyring --collect-all google.genai lecturescribe.pyw
+          python -m PyInstaller --noconfirm --clean --onefile --windowed --name LectureScribe --collect-all faster_whisper --collect-all ctranslate2 --collect-all av --collect-all yt_dlp --collect-all customtkinter --collect-all imageio_ffmpeg --collect-all requests --collect-all keyring --collect-all google.genai --collect-all openvino --collect-all openvino_genai --collect-all openvino_tokenizers lecturescribe.pyw
           if (!(Test-Path 'dist/LectureScribe.exe')) { throw 'EXE missing' }
       - name: Package download
         shell: pwsh

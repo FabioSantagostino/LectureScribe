@@ -6,3 +6,4 @@ requests>=2.32,<3
 imageio-ffmpeg>=0.6,<1
 keyring>=25,<27
 google-genai>=1.50,<4
+openvino-genai>=2026.1,<2027

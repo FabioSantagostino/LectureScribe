@@ -6,16 +6,17 @@ substitute a smaller model. If unavailable or slower, use faster-whisper CPU.
 from __future__ import annotations
 
 import json
-import math
 import subprocess
 import tempfile
 import time
-from dataclasses import dataclass
+import wave
 from pathlib import Path
 
 
 class OpenVINOUnavailable(Exception):
-    pass
+    def __init__(self, reason):
+        super().__init__(reason)
+        self.reason = reason
 
 
 MODEL_MAP = {
@@ -28,6 +29,23 @@ MODEL_MAP = {
 
 def model_directory(cache: Path, whisper_name: str) -> Path:
     return cache / MODEL_MAP[whisper_name]
+
+
+def resolve_model(models_root, name, on_status):
+    prepared = model_directory(models_root, name)
+    if (prepared / 'openvino_encoder_model.xml').is_file():
+        return prepared
+    from huggingface_hub import snapshot_download
+
+    on_status('ov_model')
+    try:
+        return Path(snapshot_download(
+            repo_id=f'OpenVINO/{MODEL_MAP[name]}-int8-ov',
+            cache_dir=models_root / 'downloads',
+            allow_patterns=['*.xml', '*.bin', '*.json', '*.txt', '*.model', 'LICENSE'],
+        ))
+    except Exception as exc:
+        raise OpenVINOUnavailable('MODEL_DOWNLOAD') from exc
 
 
 def device_list():
@@ -51,12 +69,14 @@ def convert_audio(media: Path, dest: Path, *, seconds=None):
 
 
 def read_audio(wav_path):
-    import wave
-    import numpy as np
     with wave.open(str(wav_path), 'rb') as f:
         if f.getframerate() != 16000 or f.getnchannels() != 1 or f.getsampwidth() != 2:
-            raise OpenVINOUnavailable('Expected 16kHz mono PCM16 WAV')
-        pcm = f.readframes(f.getnframes())
+            raise OpenVINOUnavailable('AUDIO_FORMAT')
+        return decode_pcm(f.readframes(f.getnframes()))
+
+
+def decode_pcm(pcm):
+    import numpy as np
     return (np.frombuffer(pcm, dtype='<i2').astype('float32') / 32768.0).tolist()
 
 
@@ -65,7 +85,7 @@ def make_pipe(model_dir, device):
         import openvino_genai
         return openvino_genai.WhisperPipeline(str(model_dir), device)
     except Exception as exc:
-        raise OpenVINOUnavailable('OpenVINO model compilation failed') from exc
+        raise OpenVINOUnavailable('MODEL_COMPILE') from exc
 
 
 def generate(pipe, speech, language=None):
@@ -77,32 +97,32 @@ def generate(pipe, speech, language=None):
 
 
 def choose_device(model_dir: Path, short_speech, cache_dir: Path, *,
-                  max_benchmark_seconds=150):
+                  available, cancelled, max_benchmark_seconds=150):
     """Benchmark only actual compatible devices; do not assume NPU is fastest.
 
     Cache decision by model and devices. Always compare against a CPU baseline
     separately in the caller before using accelerated inference.
     """
-    available = device_list()
-    if not available or not model_dir.exists():
-        raise OpenVINOUnavailable('OpenVINO model or devices unavailable')
     try:
         import openvino
         driver = openvino.get_version()
     except Exception:
         driver = 'unknown'
-    key = '|'.join([str(model_dir.resolve()), ','.join(available), driver])
+    key = '|'.join(['v2', str(model_dir.resolve()), ','.join(available), driver])
     cache_dir.mkdir(parents=True, exist_ok=True)
     settings = cache_dir / 'benchmarks.json'
     try:
         data = json.loads(settings.read_text(encoding='utf-8'))
     except (OSError, ValueError):
         data = {}
-    if data.get('key') == key and data.get('device') in available:
+    if isinstance(data, dict) and data.get('key') == key and data.get('device') in available:
         return data['device'], None
     scores = {}
+    fastest_pipe = None
+    fastest_time = float('inf')
     for device in available:
-        started = time.perf_counter()
+        if cancelled():
+            raise InterruptedError()
         try:
             pipe = make_pipe(model_dir, device)
             # Keep compilation out of inference measurement.
@@ -113,65 +133,72 @@ def choose_device(model_dir: Path, short_speech, cache_dir: Path, *,
             elapsed = time.perf_counter() - infer_start
             if elapsed <= max_benchmark_seconds:
                 scores[device] = elapsed
+                if elapsed < fastest_time:
+                    fastest_pipe, fastest_time = pipe, elapsed
         except Exception:
             continue
-    if not scores:
-        raise OpenVINOUnavailable('No compatible OpenVINO backend')
+    if not (scores.keys() & {'GPU', 'NPU'}):
+        raise OpenVINOUnavailable('NO_COMPATIBLE_ACCELERATOR')
     device = min(scores, key=scores.get)
-    settings.write_text(json.dumps({'key': key, 'device': device, 'scores': scores}), encoding='utf-8')
-    return device, scores
+    if len(scores) == len(available):
+        settings.write_text(json.dumps({'key': key, 'device': device, 'scores': scores}), encoding='utf-8')
+    return device, fastest_pipe
 
 
 def transcribe_if_available(media: Path, model: str, language: str | None,
-                            models_root: Path, bench_root: Path, cancelled=lambda: False):
-    """Yield start/end/text tuples; None if optional acceleration is absent.
-
-    Benchmark 12 seconds of real input; OpenVINO backend must outperform the
-    default CPU estimate (no score fabricated). Actual selection is based on
-    measured OpenVINO GPU/NPU/CPU performance, and caller has fallback.
-    """
-    model_dir = model_directory(models_root, model)
-    if not model_dir.exists() or not device_list():
-        raise OpenVINOUnavailable('Matching converted model unavailable')
+                            models_root: Path, bench_root: Path, cancelled=lambda: False,
+                            on_status=lambda phase: None):
+    """Transcribe on a measured GPU/NPU when it wins the OpenVINO benchmark."""
+    available = device_list()
+    if not available:
+        raise OpenVINOUnavailable('RUNTIME_UNAVAILABLE')
+    if not ({'GPU', 'NPU'} & set(available)):
+        raise OpenVINOUnavailable('NO_ACCELERATOR')
+    model_dir = resolve_model(models_root, model, on_status)
+    if cancelled():
+        raise InterruptedError()
+    on_status('ov_benchmark')
     with tempfile.TemporaryDirectory(prefix='lecturescribe_ov_') as temp:
         test = Path(temp) / 'sample.wav'
         convert_audio(media, test, seconds=12)
         speech = read_audio(test)
-        device, _ = choose_device(model_dir, speech, bench_root)
+        device, pipe = choose_device(model_dir, speech, bench_root,
+                                     available=available, cancelled=cancelled)
         if cancelled():
             raise InterruptedError()
         # The existing faster-whisper CPU remains the preferred CPU path.
         # Do not switch merely because OpenVINO CPU happened to win its own race.
         if device == 'CPU':
-            raise OpenVINOUnavailable('CPU is fastest; use existing CPU backend')
-        pipe = make_pipe(model_dir, device)
+            raise OpenVINOUnavailable('CPU_BENCHMARK')
+        if pipe is None:
+            pipe = make_pipe(model_dir, device)
         full_path = Path(temp) / 'full.wav'
         convert_audio(media, full_path)
-        full_audio = read_audio(full_path)
         if cancelled():
             raise InterruptedError()
-        chunk_samples = 120 * 16000
+        chunk_samples = 30 * 16000
         overlap_samples = 1 * 16000
         output = []
-        cursor = 0
-        while cursor < len(full_audio):
-            if cancelled():
-                raise InterruptedError()
-            end = min(len(full_audio), cursor + chunk_samples)
-            start = max(0, cursor - overlap_samples if cursor else 0)
-            result = generate(pipe, full_audio[start:end], language)
-            chunks = getattr(result, 'chunks', None)
-            if not chunks:
-                raise OpenVINOUnavailable('Missing timestamped segments')
-            offset = start / 16000
-            accepted_until = cursor / 16000
-            for c in chunks:
-                abs_start = offset + float(c.start_ts)
-                abs_end = offset + float(c.end_ts)
-                if abs_end <= accepted_until:
-                    continue
-                text = str(c.text).strip()
-                if text:
-                    output.append((max(abs_start,accepted_until), abs_end, text))
-            cursor = end
+        on_status(device)
+        with wave.open(str(full_path), 'rb') as audio:
+            for cursor in range(0, audio.getnframes(), chunk_samples):
+                if cancelled():
+                    raise InterruptedError()
+                end = min(audio.getnframes(), cursor + chunk_samples)
+                start = max(0, cursor - overlap_samples)
+                audio.setpos(start)
+                result = generate(pipe, decode_pcm(audio.readframes(end - start)), language)
+                chunks = getattr(result, 'chunks', None) or ()
+                if not chunks and str(result).strip():
+                    raise OpenVINOUnavailable('TIMESTAMPS_UNAVAILABLE')
+                offset = start / 16000
+                accepted_until = cursor / 16000
+                for c in chunks:
+                    abs_start = offset + float(c.start_ts)
+                    abs_end = offset + float(c.end_ts)
+                    if abs_end <= accepted_until:
+                        continue
+                    text = str(c.text).strip()
+                    if text:
+                        output.append((max(abs_start, accepted_until), abs_end, text))
         return output, device

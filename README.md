@@ -6,9 +6,9 @@ Trascrivi lezioni e registrazioni su Windows. Puoi partire da un link Webex, da 
 
 1. Scarica `LectureScribe-Windows-x64.zip` dalla [pagina delle release](https://github.com/FabioSantagostino/LectureScribe/releases/latest).
 2. Estrai **tutto lo ZIP** in una cartella stabile e avvia `LectureScribe.exe`. Tieni la cartella `browser-extension` accanto all'EXE se usi Webex.
-3. Al primo avvio, indica il browser predefinito di Windows. Per Samsung Internet scegli **Altri browser Chromium (Samsung Internet incluso)**. La scelta viene salvata e puoi aggiornarla da **Avanzate → Browser per Webex**.
+3. Al primo avvio, indica il browser predefinito di Windows. Se il tuo browser non compare per nome ed è basato su Chromium, scegli **Altri browser Chromium**. La scelta viene salvata e puoi aggiornarla da **Avanzate → Browser per Webex**.
 
-Se provieni dalla v1.3.0, scarica ed estrai lo ZIP completo. L'aggiornamento dall'app sostituisce l'EXE. L'estensione va installata dal nuovo pacchetto.
+Per installare anche l’estensione o aggiornarne i file, scarica ed estrai lo ZIP completo. L’aggiornamento dall’app sostituisce l’EXE.
 
 ## Trascrivere un file o un link HLS diretto
 
@@ -18,22 +18,24 @@ Se provieni dalla v1.3.0, scarica ed estrai lo ZIP completo. L'aggiornamento dal
 
 ## Trascrivere da un link Webex `/playback`
 
-### Installa l'estensione per il tuo browser
+Incolla il link Webex originale e premi **Avvia trascrizione**. LectureScribe prova prima a scaricarlo con yt-dlp. Se ci riesce, il lavoro continua senza aprire il browser. Questo dipende dalla registrazione e da ciò che Webex permette a yt-dlp di recuperare direttamente. Il browser predefinito entra in gioco solo se serve il secondo tentativo. Anche i link HLS diretti funzionano senza estensione.
+
+### Installa l'estensione solo se il link richiede il browser
 
 Per i browser Chromium, apri la pagina delle estensioni, abilita **Modalità sviluppatore** e scegli **Carica estensione non pacchettizzata**. Seleziona la cartella `browser-extension` accanto a `LectureScribe.exe`. L'installazione si fa una volta per profilo del browser. Mantieni la cartella nella posizione in cui l'hai caricata.
 
 | Browser | Pagina delle estensioni |
 | --- | --- |
-| Samsung Internet per Windows | `internet://extensions` |
 | Google Chrome | `chrome://extensions` |
 | Microsoft Edge | `edge://extensions` |
 | Brave | `brave://extensions` |
+| Altri browser Chromium | Apri la pagina **Estensioni** dal menu del browser |
 
 In **Firefox**, apri `about:debugging#/runtime/this-firefox`, seleziona **Carica componente aggiuntivo temporaneo** e apri `browser-extension/firefox/manifest.json`. Firefox rimuove questa installazione temporanea quando si chiude. Ricaricala dopo il riavvio. Se usi il repository sorgente, copia `browser-extension` in una cartella distinta e sostituisci `manifest.json` con `manifest.firefox.json` rinominato.
 
 ### Avvia la registrazione
 
-1. Incolla il link Webex originale in LectureScribe e premi **Avvia trascrizione**.
+1. Dopo aver installato l’estensione, riprova il link Webex originale in LectureScribe.
 2. L'estensione accompagna la nuova scheda al player nel browser predefinito di Windows. Se Webex richiede l'accesso, completalo sul sito nella sessione del tuo browser. Premi **Play** se il video rimane in pausa.
 3. Quando il player riceve la playlist HLS, LectureScribe la scarica con yt-dlp e avvia la trascrizione. Per una coda con più registrazioni, ripeti la riproduzione nelle schede che la richiedono.
 
@@ -41,7 +43,7 @@ In **Firefox**, apri `about:debugging#/runtime/this-firefox`, seleziona **Carica
 
 L'estensione osserva le risposte Webex della sola scheda avviata per quel lavoro. Invia l'indirizzo della playlist, con i parametri originali, all'app attraverso una connessione temporanea su `127.0.0.1`. Il browser gestisce la sessione Webex. LectureScribe non legge né esporta cookie o password.
 
-Se compare **Estensione LectureScribe non rilevata**, controlla che sia attiva nel profilo aperto dal browser predefinito e riprova. Se il player si apre ma la playlist non viene rilevata, avvia il video e controlla che la registrazione sia riproducibile. Se hai già una playlist HLS valida puoi incollarla direttamente, anche senza estensione. Se è scaduta, riparti dal link Webex. Tieni privati i link firmati.
+Se LectureScribe segnala che il download diretto non è riuscito, puoi attivare l’estensione nel profilo del browser predefinito oppure incollare un URL HLS valido. Se il player si apre ma la playlist non viene rilevata, avvia il video e controlla che la registrazione sia riproducibile. Se hai già una playlist HLS valida puoi incollarla direttamente, anche senza estensione. Se è scaduta, riparti dal link Webex. Tieni privati i link firmati.
 
 ## Trascrizione cloud e file di uscita
 
@@ -49,11 +51,15 @@ In modalità **Cloud**, scegli Groq, OpenAI o Gemini. Aggiungi e verifica una ch
 
 Whisper locale esporta TXT, Markdown e SRT. I provider cloud esportano TXT e Markdown con timestamp approssimativi per blocco. In modalità locale l'audio viene trascritto sul dispositivo.
 
-## OpenVINO sperimentale (da sorgente)
+## Accelerazione locale Intel con OpenVINO
 
-Per la trascrizione locale è disponibile un backend OpenVINO GenAI opzionale. Con un modello IR compatibile, l'app confronta CPU e dispositivi Intel disponibili su un breve campione e può scegliere automaticamente GPU o NPU. Whisper su CPU resta disponibile quando OpenVINO manca o non viene scelto. L'EXE distribuito usa il runtime standard. OpenVINO richiede un avvio da sorgente con librerie e modelli aggiuntivi.
+Dalla v1.5.1 il runtime OpenVINO è incluso nell’EXE Windows. In modalità **Locale**, LectureScribe cerca una GPU o NPU Intel esposta dai driver. Se la trova, scarica al primo utilizzo il modello Whisper INT8 ufficiale corrispondente alla qualità selezionata, salvo che sia già disponibile. Conserva il modello per i lavori successivi in `%APPDATA%\LectureScribe\openvino_models`. I modelli richiedono spazio su disco e, al primo utilizzo, una connessione.
 
-In un ambiente separato, installa `requirements-accelerated.txt` ed esegui `python prepare_openvino.py balanced` (o `fast` / `accurate`). Per usare il modello preparato, installa `openvino-genai` anche nell'ambiente Python da cui avvii LectureScribe. Il modello viene salvato in `%APPDATA%\LectureScribe\openvino_models`.
+L’app confronta i dispositivi compatibili su un breve campione, poi mostra durante la trascrizione **OpenVINO GPU**, **OpenVINO NPU** o **CPU**. La CPU resta disponibile se è più veloce nel confronto, se un modello non è compatibile o se manca un acceleratore. Durante la trascrizione cloud l'inferenza viene svolta dal provider.
+
+Il log diagnostico indica il dispositivo usato (`OPENVINO_ACTIVE_GPU`, `OPENVINO_ACTIVE_NPU`) o il motivo del ritorno alla CPU (voci `OPENVINO_FALLBACK_…`). Per i requisiti dei driver, consulta la [documentazione OpenVINO per NPU](https://docs.openvino.ai/2026/openvino-workflow-generative/inference-with-genai/inference-with-genai-on-npu.html).
+
+Per usare un modello preparato da sorgente puoi ancora installare `requirements-accelerated.txt` in un ambiente separato ed eseguire `python prepare_openvino.py balanced` (o `fast` / `accurate`).
 
 ## Avvio da sorgente
 

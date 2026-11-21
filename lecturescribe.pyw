@@ -82,27 +82,31 @@ I18N["en"].update({
 WEBEX_ERRORS = {"webex_extension_missing", "webex_capture_failed", "webex_browser_failed"}
 I18N['it'].update({
     'webex_setup': 'Browser per Webex',
-    'webex_setup_help': 'Indica il tuo browser predefinito in Windows. LectureScribe userà la finestra e la sessione già aperte.',
-    'webex_chromium_help': 'Carica una volta l’estensione Chromium inclusa nella cartella browser-extension. Vedi il README.',
-    'webex_firefox_help': 'Carica l’estensione Firefox da about:debugging. Vedi il README per la durata dell’installazione.',
-    'webex_other': 'Altri browser Chromium (Samsung Internet incluso)',
+    'ov_model': 'Download del modello OpenVINO…',
+    'ov_benchmark': 'Verifica dei dispositivi OpenVINO…',
+    'webex_setup_help': 'Scegli il browser predefinito di Windows. LectureScribe lo usa solo se il download diretto fallisce.',
+    'webex_chromium_help': 'Se un link Webex richiede il browser, puoi usare l’estensione Chromium inclusa. Vedi il README.',
+    'webex_firefox_help': 'Se un link Webex richiede il browser, puoi caricare l’estensione da about:debugging.',
+    'webex_other': 'Altri browser Chromium',
     'webex_save': 'Salva browser',
     'webex_connect': 'Apertura del browser predefinito…',
     'webex_wait': 'Avvia il video nella scheda Webex per rilevare la playlist…',
-    'webex_extension_missing': 'Estensione LectureScribe non rilevata. Attivala nel browser predefinito e riprova.',
+    'webex_extension_missing': 'yt-dlp non ha scaricato questo link Webex direttamente. Per riprovare, attiva l’estensione nel browser predefinito o incolla un link HLS valido.',
     'webex_capture_failed': 'Playlist non rilevata. Verifica che il video Webex parta, oppure incolla il link HLS diretto.',
     'webex_browser_failed': 'Impossibile aprire il browser predefinito.',
 })
 I18N['en'].update({
     'webex_setup': 'Webex browser',
-    'webex_setup_help': 'Select your Windows default browser. LectureScribe will use that browser and its current session.',
-    'webex_chromium_help': 'Load the included Chromium extension from browser-extension once. See the README.',
-    'webex_firefox_help': 'Load the Firefox extension from about:debugging. See the README for installation lifetime.',
-    'webex_other': 'Other Chromium browsers (including Samsung Internet)',
+    'ov_model': 'Downloading the OpenVINO model…',
+    'ov_benchmark': 'Checking OpenVINO devices…',
+    'webex_setup_help': 'Select your Windows default browser. LectureScribe uses it only if direct download fails.',
+    'webex_chromium_help': 'If a Webex link needs the browser, use the included Chromium extension. See the README.',
+    'webex_firefox_help': 'If a Webex link needs the browser, load the extension from about:debugging.',
+    'webex_other': 'Other Chromium browsers',
     'webex_save': 'Save browser',
     'webex_connect': 'Opening the default browser…',
     'webex_wait': 'Start the video in the Webex tab to detect the playlist…',
-    'webex_extension_missing': 'LectureScribe extension not detected. Enable it in the default browser and retry.',
+    'webex_extension_missing': 'yt-dlp could not download this Webex link directly. Enable the extension in the default browser or paste a valid HLS URL.',
     'webex_capture_failed': 'Playlist not detected. Make sure the Webex video plays, or paste a direct HLS link.',
     'webex_browser_failed': 'Could not open the default browser.',
 })
@@ -170,9 +174,9 @@ class App:
         self.engine = tk.StringVar(value=config.get("engine", "local"))
         self.api_key = tk.StringVar(value="")  # Session-only, never stored or logged.
         saved_browser = config.get("webex_browser", "")
-        if saved_browser in ("Samsung Internet", "Altro browser Chromium", "Other Chromium browser"):
-            saved_browser = "chromium"
-        self.webex_browser = saved_browser if saved_browser in ("chromium", "Chrome", "Edge", "Brave", "Firefox") else ""
+        self.webex_browser = saved_browser
+        if saved_browser and saved_browser not in ("Chrome", "Edge", "Brave", "Firefox"):
+            self.webex_browser = "chromium"
         self.cpu_threads = config.get("cpu_threads", min(8, os.cpu_count() or 8))
         self.update_repo = tk.StringVar(value=OFFICIAL_REPO)
         self.status = tk.StringVar(value=I18N[self.ui_language.get()]["ready"])
@@ -1092,24 +1096,9 @@ class App:
                 if total:
                     self.send("progress", min(35, 35 * data.get("downloaded_bytes", 0) / total))
 
-        target = url
-        if is_webex_playback(url):
-            self.send("status", self.t("webex_connect"))
-            try:
-                target = capture_playlist(
-                    url, check_cancel=self.check_cancel,
-                    on_playback=lambda: self.send("status", self.t("webex_wait")),
-                )
-            except WebexBrowserError as exc:
-                self.check_cancel()
-                self.log("WEBEX_CAPTURE_FAILED")
-                raise RuntimeError(str(exc)) from None
-            self.log("WEBEX_HLS_FOUND")
-
         self.log("DOWNLOAD_STARTED")
         self.send("status", self.t("downloading"))
         opts = {
-            "outtmpl": str(folder / "recording.%(ext)s"),
             "noplaylist": True,
             "ffmpeg_location": imageio_ffmpeg.get_ffmpeg_exe(),
             "socket_timeout": 15,
@@ -1123,17 +1112,42 @@ class App:
             "no_warnings": True,
             "noprogress": True,
         }
-        try:
-            with yt_dlp.YoutubeDL(opts) as dl:
+        def attempt(target, destination):
+            destination.mkdir(exist_ok=True)
+            self.send("status", self.t("downloading"))
+            with yt_dlp.YoutubeDL({**opts, "outtmpl": str(destination / "recording.%(ext)s")}) as dl:
                 metadata = dl.extract_info(target, download=True) or {}
+            self.check_cancel()
+            candidates = [p for p in destination.iterdir() if p.is_file() and p.suffix.lower() in EXTS]
+            if not candidates:
+                raise DownloadError("no_media")
+            return candidates, metadata
+
+        try:
+            candidates, metadata = attempt(url, folder)
         except DownloadError:
             self.check_cancel()
-            self.log("DOWNLOAD_FAILED")
-            raise RuntimeError("download_failed") from None
-        self.check_cancel()
-        candidates = [p for p in folder.iterdir() if p.is_file() and p.suffix.lower() in EXTS]
-        if not candidates:
-            raise RuntimeError("no_media")
+            if not is_webex_playback(url):
+                self.log("DOWNLOAD_FAILED")
+                raise RuntimeError("download_failed") from None
+            self.log("WEBEX_DIRECT_DOWNLOAD_FAILED")
+            self.send("status", self.t("webex_connect"))
+            try:
+                target = capture_playlist(
+                    url, check_cancel=self.check_cancel,
+                    on_playback=lambda: self.send("status", self.t("webex_wait")),
+                )
+            except WebexBrowserError as exc:
+                self.check_cancel()
+                self.log("WEBEX_CAPTURE_FAILED")
+                raise RuntimeError(str(exc)) from None
+            self.log("WEBEX_HLS_FOUND")
+            try:
+                candidates, metadata = attempt(target, folder / "hls")
+            except DownloadError:
+                self.check_cancel()
+                self.log("WEBEX_HLS_DOWNLOAD_FAILED")
+                raise RuntimeError("download_failed") from None
         self.log("DOWNLOAD_FINISHED")
         self.send("progress", 35)
         return max(candidates, key=lambda p: p.stat().st_size), (metadata.get("title") or metadata.get("fulltitle"))
@@ -1143,21 +1157,35 @@ class App:
         self.send("status", self.t("loading"))
         language = None if job["spoken"] == "auto" else job["spoken"]
         ov_result = None
+
+        def accelerator_status(phase):
+            if phase in ("GPU", "NPU"):
+                self.log("OPENVINO_ACTIVE_" + phase)
+                self.send("status", f"{self.t('transcribing')} · OpenVINO {phase}")
+            else:
+                self.send("status", self.t(phase))
+
         try:
             ov_result = transcribe_if_available(
                 media, job["model"], language, OV_MODELS, OV_BENCH,
-                cancelled=self.stop_event.is_set)
+                cancelled=self.stop_event.is_set, on_status=accelerator_status)
         except InterruptedError:
             raise JobCancelled()
+        except OpenVINOUnavailable as exc:
+            self.check_cancel()
+            self.log("OPENVINO_FALLBACK_" + exc.reason)
         except Exception:
-            self.log("OPENVINO_FALLBACK_CPU")
+            self.check_cancel()
+            self.log("OPENVINO_FALLBACK_ERROR")
         if ov_result:
             from types import SimpleNamespace
             items, device = ov_result
-            self.log("OPENVINO_ACTIVE_" + device)
+            backend = "OpenVINO " + device
             segments = (SimpleNamespace(start=a, end=b, text=t) for a,b,t in items)
             duration = items[-1][1] if items else 0
         else:
+            backend = "CPU"
+            self.send("status", f"{self.t('loading')} · {backend}")
             if self.model_instance is None or self.model_name != job["model"]:
                 try:
                     self.model_instance = WhisperModel(job["model"], device="cpu", compute_type="int8", cpu_threads=self.cpu_threads)
@@ -1188,7 +1216,7 @@ class App:
                     if duration:
                         start, portion = (35, 65) if network_media else (0, 100)
                         self.send("progress", start + min(1, segment.end / duration) * portion)
-                    self.send("status", f"{self.t('transcribing')}: {millis(segment.end)}")
+                    self.send("status", f"{self.t('transcribing')} · {backend} · {millis(segment.end)}")
             self.check_cancel()
             completed = True
         finally:
