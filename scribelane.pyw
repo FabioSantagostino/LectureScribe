@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import json
+from contextlib import ExitStack
+from urllib.parse import urlsplit
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from types import SimpleNamespace
 import os
@@ -42,6 +44,7 @@ OV_MODELS = CONFIG_DIR / "openvino_models"
 OV_BENCH = CONFIG_DIR / "openvino_benchmarks"
 DEFAULT_DIR = Path.home() / "Documents" / APP
 EXTS = {".mp4", ".mkv", ".webm", ".mov", ".mp3", ".m4a", ".wav", ".flac", ".aac"}
+OUTPUT_FORMATS = ("txt", "md", "srt")
 QUALITY_CHOICES = ("fast", "balanced", "accurate")
 
 
@@ -79,9 +82,9 @@ I18N["en"].update({'step_source': '01  Choose recording', 'step_source_help': 'P
 
 
 I18N["it"].update({
- "queue":"Coda di trascrizione", "add_files":"+ File", "add_link":"+ Link", "clear_queue":"Svuota", "queue_empty":"Nessun elemento in coda", "queue_count":"Elementi in coda", "link_prompt":"Incolla il link Webex / HLS", "backend":"Motore di trascrizione", "local_engine":"Locale · Whisper", "cloud_engine":"Cloud · OpenAI API", "api_key":"Chiave API OpenAI (solo per questa sessione)", "cloud_warning":"Modalità cloud: l'audio sarà inviato a OpenAI. Richiede chiave API e può avere costi. I timestamp sono approssimativi (blocchi), nessun SRT cloud.", "updates":"Aggiornamenti", "update_repo":"Repository GitHub (owner/repo)", "check_update":"Cerca aggiornamenti", "update_found":"Nuova versione disponibile", "no_update":"Hai già l'ultima versione", "install_update":"Scaricare e installare l'aggiornamento? L'app verrà riavviata.", "update_error":"Aggiornamento non riuscito. Controlla repository e connessione.", "cloud_confirm":"La registrazione audio sarà caricata su OpenAI e potrebbe essere fatturata. Continuare?", "cloud_key_missing":"Inserisci la chiave API per il servizio cloud.", "cloud_result":"La trascrizione cloud usa timestamp di blocco approssimativi, non sottotitoli sincronizzati.", "batch_finished":"Elaborazione della coda completata", "batch_failed":"Alcune registrazioni non sono state elaborate. Vedi log diagnostici."})
+ "queue":"Coda di trascrizione", "add_files":"+ File", "add_link":"+ Link", "clear_queue":"Svuota", "queue_empty":"Nessun elemento in coda", "queue_count":"Elementi in coda", "link_prompt":"Incolla il link Webex / HLS", "backend":"Motore di trascrizione", "local_engine":"Locale · Whisper", "cloud_engine":"Cloud · OpenAI API", "api_key":"Chiave API OpenAI (solo per questa sessione)", "cloud_warning":"Modalità cloud: l'audio sarà inviato a OpenAI. Richiede chiave API e può avere costi. I timestamp sono approssimativi (blocchi), nessun SRT cloud.", "updates":"Aggiornamenti", "update_repo":"Repository GitHub (owner/repo)", "check_update":"Cerca aggiornamenti", "update_found":"Nuova versione disponibile", "no_update":"Hai già l'ultima versione", "install_update":"Scaricare e installare l'aggiornamento? L'app verrà riavviata.", "update_error":"Aggiornamento non riuscito. Controlla repository e connessione.", "cloud_confirm":"La registrazione audio sarà caricata su OpenAI e potrebbe essere fatturata. Continuare?", "cloud_key_missing":"Inserisci la chiave API per il servizio cloud.", "cloud_result":"I tempi della trascrizione cloud indicano blocchi audio approssimativi.", "batch_finished":"Elaborazione della coda completata", "batch_failed":"Alcune registrazioni non sono state elaborate. Vedi log diagnostici."})
 I18N["en"].update({
- "queue":"Transcription queue", "add_files":"+ Files", "add_link":"+ Link", "clear_queue":"Clear", "queue_empty":"No queued items", "queue_count":"Queued items", "link_prompt":"Paste Webex / HLS URL", "backend":"Transcription engine", "local_engine":"Local · Whisper", "cloud_engine":"Cloud · OpenAI API", "api_key":"OpenAI API key (session only)", "cloud_warning":"Cloud mode sends audio to OpenAI. Requires a billed API key. Timestamps are approximate chunk markers, no cloud SRT.", "updates":"Updates", "update_repo":"GitHub repository (owner/repo)", "check_update":"Check for updates", "update_found":"A new version is available", "no_update":"You're up to date", "install_update":"Download and install the update? The app will restart.", "update_error":"Update failed. Check repository and connection.", "cloud_confirm":"Audio will be uploaded to OpenAI and may incur charges. Continue?", "cloud_key_missing":"Enter your cloud API key.", "cloud_result":"Cloud timestamps mark approximate chunks, not synchronized subtitles.", "batch_finished":"Queue finished", "batch_failed":"Some recordings failed. See diagnostics."})
+ "queue":"Transcription queue", "add_files":"+ Files", "add_link":"+ Link", "clear_queue":"Clear", "queue_empty":"No queued items", "queue_count":"Queued items", "link_prompt":"Paste Webex / HLS URL", "backend":"Transcription engine", "local_engine":"Local · Whisper", "cloud_engine":"Cloud · OpenAI API", "api_key":"OpenAI API key (session only)", "cloud_warning":"Cloud mode sends audio to OpenAI. Requires a billed API key. Timestamps are approximate chunk markers, no cloud SRT.", "updates":"Updates", "update_repo":"GitHub repository (owner/repo)", "check_update":"Check for updates", "update_found":"A new version is available", "no_update":"You're up to date", "install_update":"Download and install the update? The app will restart.", "update_error":"Update failed. Check repository and connection.", "cloud_confirm":"Audio will be uploaded to OpenAI and may incur charges. Continue?", "cloud_key_missing":"Enter your cloud API key.", "cloud_result":"Cloud timestamps refer to approximate audio chunks.", "batch_finished":"Queue finished", "batch_failed":"Some recordings failed. See diagnostics."})
 
 WEBEX_ERRORS = {"webex_extension_missing", "webex_capture_failed", "webex_browser_failed"}
 I18N['it'].update({
@@ -122,6 +125,50 @@ class JobCancelled(Exception):
     pass
 
 
+I18N['it'].update({
+    'workspace': 'Trascrivi',
+    'preferences': 'Impostazioni',
+    'appearance': 'Aspetto e lingua dell’app',
+    'output_settings': 'File e cartelle',
+    'formats': 'Formati della trascrizione',
+    'formats_help': 'Seleziona uno o più formati. Per le trascrizioni cloud, SRT usa tempi approssimativi per blocco.',
+    'connections': 'Webex e aggiornamenti',
+    'source_hint': 'Incolla un link Webex o HLS, oppure sfoglia i file sul PC.',
+    'step_source': 'Registrazione o coda',
+    'step_settings': 'Motore, qualità e lingua del parlato',
+    'step_run': 'Stato della trascrizione',
+    'tagline': 'Trascrizioni da audio, video e Webex',
+    'cloud_engine': 'Cloud · API',
+    'cloud_confirm': 'L’audio verrà inviato al provider selezionato e il servizio potrebbe addebitare costi. Continuare?',
+    'bulk_title': 'Modifica la coda',
+    'bulk_button': 'Incolla link…',
+    'bulk_help': 'Una registrazione per riga. Puoi incollare tutti i link insieme o usare Nome | link per assegnare un titolo. Per rimuovere un elemento, cancella la sua riga.',
+    'bulk_invalid': 'Controlla il link o il file alla riga {line}.',
+    'bulk_save': 'Salva coda',
+})
+I18N['en'].update({
+    'workspace': 'Transcribe',
+    'preferences': 'Settings',
+    'appearance': 'Appearance and app language',
+    'output_settings': 'Files and folders',
+    'formats': 'Transcript formats',
+    'formats_help': 'Select one or more formats. Cloud SRT uses approximate times for each audio chunk.',
+    'connections': 'Webex and updates',
+    'source_hint': 'Paste a Webex or HLS link, or browse for a file.',
+    'step_source': 'Recording or queue',
+    'step_settings': 'Engine, quality and spoken language',
+    'step_run': 'Transcription status',
+    'tagline': 'Transcripts from audio, video and Webex',
+    'cloud_engine': 'Cloud · API',
+    'cloud_confirm': 'Audio will be sent to the selected provider and charges may apply. Continue?',
+    'bulk_title': 'Edit the queue',
+    'bulk_button': 'Paste links…',
+    'bulk_help': 'One recording per line. Paste all links at once or use Name | link to assign a title. Delete a line to remove its recording.',
+    'bulk_invalid': 'Check the link or file on line {line}.',
+    'bulk_save': 'Save queue',
+})
+
+
 def millis(seconds: float, srt: bool = False) -> str:
     value = max(0, round(seconds * 1000))
     h, rem = divmod(value, 3_600_000)
@@ -149,6 +196,31 @@ class PrivateLogger:
     warning = error = debug
 
 
+def parse_queue(text):
+    sources = {}
+    for index, line in enumerate(text.splitlines(), start=1):
+        line = line.strip()
+        if not line:
+            continue
+        title, source = "", line
+        if not line.startswith(("https://", "http://")) and "|" in line:
+            title, source = (part.strip() for part in line.split("|", 1))
+        source = source.strip('"')
+        try:
+            url = urlsplit(source)
+            valid = ((url.scheme in ("https", "http") and bool(url.hostname)
+                      and not any(c.isspace() for c in source))
+                     if source.startswith(("https://", "http://"))
+                     else bool(source) and Path(source).is_file())
+        except (ValueError, OSError):
+            valid = False
+        if not valid:
+            raise ValueError(index)
+        if title or source not in sources:
+            sources[source] = {"source": source, "name": title or None}
+    return list(sources.values())
+
+
 class App:
     def __init__(self, root: tk.Tk):
         self.root = root
@@ -171,7 +243,11 @@ class App:
         self.source = tk.StringVar(value="")
         self.lecture = tk.StringVar(value="")
         self.custom_name = tk.BooleanVar(value=False)
-        self.advanced_open = tk.BooleanVar(value=False)
+        self.current_page = "workspace"
+        stored_formats = config.get("formats")
+        selected = {fmt for fmt in OUTPUT_FORMATS if fmt in (stored_formats if isinstance(stored_formats, list) else [])}
+        self.formats = {fmt: tk.BooleanVar(value=fmt in selected or not selected)
+                        for fmt in OUTPUT_FORMATS}
         self.transcripts_dir = tk.StringVar(value=config.get("transcripts", str(DEFAULT_DIR / "Trascrizioni")))
         self.videos_dir = tk.StringVar(value=config.get("videos", str(DEFAULT_DIR / "Video")))
         self.keep_video = tk.BooleanVar(value=config.get("keep_video", False))
@@ -194,8 +270,8 @@ class App:
         self.scroll_area = None
         self.main = None
         root.title("ScribeLane")
-        root.geometry("760x620")
-        root.minsize(590, 470)
+        root.geometry("800x680")
+        root.minsize(590, 495)
         self.apply_theme()
         self.rebuild()
         self._rendered_language = self.ui_language.get()
@@ -219,6 +295,8 @@ class App:
             "transcripts": self.transcripts_dir.get(), "videos": self.videos_dir.get(),
             "keep_video": self.keep_video.get(), "quality": self.model.get(), "spoken": self.spoken.get(),
             "webex_browser": self.webex_browser,
+            "formats": [fmt for fmt, enabled in self.formats.items() if enabled.get()],
+            "cpu_threads": self.cpu_threads,
             "engine": self.engine.get(), "cloud_provider":self.cloud_provider.get(),
             "cloud_model":self.cloud_model.get(), "cloud_key_id":self.cloud_key_id.get(),
         }
@@ -237,12 +315,12 @@ class App:
 
     def palette(self):
         if self.is_dark():
-            return dict(bg="#0d1017", panel="#171c26", inset="#242b39",
+            return dict(bg="#10141e", panel="#192232", inset="#233148",
                         fg="#f5f7fb", muted="#a0aaba", line="#2e3646",
-                        accent="#40d6ae", accent_text="#09241b", hover="#30394b")
-        return dict(bg="#f5f7fb", panel="#ffffff", inset="#edf1f7",
+                        accent="#80dac6", accent_text="#0d302d", hover="#30425d")
+        return dict(bg="#f1f4f9", panel="#ffffff", inset="#e8eef8",
                     fg="#1b2433", muted="#647084", line="#e3e8f0",
-                    accent="#087c68", accent_text="#ffffff", hover="#e5ebf3")
+                    accent="#135e62", accent_text="#ffffff", hover="#d9e3f3")
 
     def apply_theme(self):
         ctk.set_appearance_mode("Dark" if self.is_dark() else "Light")
@@ -473,39 +551,50 @@ class App:
         self.refresh_cloud_options()
 
     def queue_editor(self):
-        """Resizable dark-mode-compatible per-recording names and links."""
-        dlg=ctk.CTkToplevel(self.root)
-        dlg.title("Registrazioni multiple / Batch recordings")
-        dlg.geometry("720x580")
-        dlg.minsize(560,430)
+        if self.running:
+            return
+        c = self.palette()
+        dlg = ctk.CTkToplevel(self.root)
+        dlg.title(self.t("bulk_title"))
+        dlg.geometry("690x470")
+        dlg.minsize(480, 330)
         dlg.transient(self.root)
-        body=ctk.CTkScrollableFrame(dlg)
-        body.pack(fill="both",expand=True,padx=14,pady=10)
-        widgets=[]
-        def draw():
-            for w in body.winfo_children():w.destroy()
-            widgets.clear()
-            self.text(body,"Registrazioni / Recordings",18,True).pack(anchor="w",pady=8)
-            for n,item in enumerate(self.pending_sources):
-                card=ctk.CTkFrame(body)
-                card.pack(fill="x",pady=6)
-                self.text(card,f"#{n+1}",12,True).pack(anchor="w",padx=10,pady=4)
-                url=ctk.StringVar(value=item['source'])
-                title=ctk.StringVar(value=item.get('name') or '')
-                ctk.CTkEntry(card,textvariable=url,placeholder_text="URL / file path").pack(fill="x",padx=10,pady=3)
-                ctk.CTkEntry(card,textvariable=title,placeholder_text="Custom name (optional) / Nome opzionale").pack(fill="x",padx=10,pady=3)
-                self.secondary_button(card,"✕  Remove",lambda i=n:remove(i),115).pack(anchor="e",padx=10,pady=5)
-                widgets.append((url,title))
-            self.secondary_button(body,"+  Add recording",add,200).pack(fill="x",pady=8)
-            self.secondary_button(body,"Save queue / Salva coda",save,220).pack(fill="x",pady=5)
-        def snapshot():
-            self.pending_sources=[{'source':u.get().strip(),'name':t.get().strip() or None} for u,t in widgets if u.get().strip()]
-        def add():snapshot();self.pending_sources.append({'source':'','name':None});draw()
-        def remove(i):snapshot();self.pending_sources.pop(i);draw()
-        def save():snapshot();self.refresh_queue();dlg.destroy()
-        def close():save()
-        dlg.protocol('WM_DELETE_WINDOW',close)
-        draw()
+        dlg.grab_set()
+        self.text(dlg, self.t("bulk_title"), 20, True).pack(anchor="w", padx=20, pady=(18, 4))
+        self.text(dlg, self.t("bulk_help"), 12, muted=True, wraplength=455,
+                  justify="left").pack(anchor="w", padx=20, pady=(0, 10))
+        editor = ctk.CTkTextbox(dlg, wrap="none", fg_color=c["inset"], corner_radius=11,
+                                border_width=1, border_color=c["line"], font=("Consolas", 13))
+        editor.pack(fill="both", expand=True, padx=20)
+        for item in self.pending_sources:
+            prefix = f"{item['name']} | " if item.get("name") else ""
+            editor.insert("end", prefix + item["source"] + "\n")
+        editor.mark_set("insert", "end-1c")
+        editor.see("insert")
+        row = ctk.CTkFrame(dlg, fg_color="transparent")
+        row.pack(fill="x", padx=20, pady=14)
+        error = self.text(row, "", 11, muted=True, justify="left", wraplength=230)
+        error.pack(side="left", fill="x")
+
+        def save():
+            try:
+                items = parse_queue(editor.get("1.0", "end-1c"))
+            except ValueError as exc:
+                line = exc.args[0]
+                error.configure(text=self.t("bulk_invalid").format(line=line))
+                editor.mark_set("insert", f"{line}.0")
+                editor.see("insert")
+                editor.focus_set()
+                return
+            self.pending_sources = items
+            self.refresh_queue()
+            dlg.destroy()
+
+        ctk.CTkButton(row, text=self.t("bulk_save"), command=save, height=36,
+                      fg_color=c["accent"], text_color=c["accent_text"]).pack(side="right")
+        self.secondary_button(row, self.t("cancel"), dlg.destroy).pack(side="right", padx=8)
+        dlg.bind("<Escape>", lambda _: dlg.destroy())
+        dlg.after(50, editor.focus_set)
 
     def rebuild(self):
         c = self.palette()
@@ -536,38 +625,36 @@ class App:
         self.main = ctk.CTkFrame(
             self.scroll_area, fg_color="transparent", width=650
         )
-        self.main.pack(fill="x", expand=True, padx=16, pady=12)
+        self.main.pack(fill="x", expand=True, padx=22, pady=16)
 
         header = ctk.CTkFrame(self.main, fg_color="transparent")
         header.pack(fill="x", pady=(0, 11))
         branding = ctk.CTkFrame(header, fg_color="transparent")
         branding.pack(side="left", fill="x", expand=True)
-        self.text(branding, "◉  ScribeLane", 21, True).pack(anchor="w")
+        self.text(branding, "ScribeLane", 26, True).pack(anchor="w")
         self.text(branding, self.t("tagline"), 11, muted=True).pack(anchor="w")
         tools = ctk.CTkFrame(header, fg_color="transparent")
         tools.pack(side="right")
-        self.language_button = self.secondary_button(tools, "EN" if self.ui_language.get()=="it" else "IT",
-                              self.toggle_language, width=40)
-        self.language_button.pack(side="left", padx=(0, 6))
-        theme_labels = {"auto":"◐", "light":"☀", "dark":"☾"}
-        self.theme_button = self.secondary_button(tools, theme_labels[self.ui_theme.get()],
-                              self.cycle_theme, width=42)
-        self.theme_button.pack(side="left")
+        self.workspace_tab = self.secondary_button(tools, self.t("workspace"), lambda: self.show_page("workspace"), 120)
+        self.workspace_tab.pack(side="left", padx=(0, 6))
+        self.settings_tab = self.secondary_button(tools, self.t("preferences"), lambda: self.show_page("settings"), 120)
+        self.settings_tab.pack(side="left")
+        self.workspace_page = ctk.CTkFrame(self.main, fg_color="transparent")
+        self.settings_page = ctk.CTkFrame(self.main, fg_color="transparent")
 
-        source_card = self.panel(self.main)
+        source_card = self.panel(self.workspace_page)
         self.text(source_card, self.t("step_source"), 14, True).pack(anchor="w", padx=15, pady=(12, 2))
+        self.text(source_card, self.t("source_hint"), 12, muted=True).pack(anchor="w", padx=15)
         self.choose_input(source_card, self.source, self.browse_file, self.t("browse"))
         queue_controls = ctk.CTkFrame(source_card, fg_color="transparent")
         queue_controls.pack(fill="x", padx=15, pady=(8, 0))
         self.text(queue_controls, self.t("queue"), 11, True).pack(side="left", padx=(0, 8))
         self.secondary_button(queue_controls, self.t("add_files"), self.enqueue_files, 66).pack(side="left", padx=(0, 5))
-        self.secondary_button(queue_controls, self.t("add_link"), self.queue_editor, 85).pack(side="left", padx=(0, 5))
+        self.secondary_button(queue_controls, self.t("bulk_button"), self.queue_editor, 138).pack(side="left", padx=(0, 5))
         self.secondary_button(queue_controls, self.t("clear_queue"), self.clear_queue, 76).pack(side="left")
         self.queue_label = self.text(source_card, "", 10, muted=True, wraplength=580, justify="left")
         self.queue_label.pack(anchor="w", padx=15, pady=(4, 2))
         self.refresh_queue()
-        self.text(source_card, self.t("original_filename_hint"), 10, muted=True,
-                  wraplength=580, justify="left").pack(anchor="w", padx=15, pady=(6, 0))
         ctk.CTkCheckBox(source_card, text=self.t("custom_name"), variable=self.custom_name,
             command=self.toggle_custom_name, checkbox_width=17, checkbox_height=17,
             font=("Segoe UI", 11), text_color=c["fg"],
@@ -578,7 +665,17 @@ class App:
         ctk.CTkEntry(self.custom_row, textvariable=self.lecture, height=34,
                      fg_color=c["inset"], border_width=0).pack(fill="x")
 
-        settings_card = self.panel(self.main)
+        appearance = self.panel(self.settings_page)
+        self.text(appearance, self.t("appearance"), 16, True).pack(anchor="w", padx=15, pady=(12, 5))
+        preferences_row = ctk.CTkFrame(appearance, fg_color="transparent")
+        preferences_row.pack(anchor="w", padx=15, pady=(0, 12))
+        self.language_button = self.secondary_button(preferences_row, "English" if self.ui_language.get() == "it" else "Italiano",
+                                                     self.toggle_language, 105)
+        self.language_button.pack(side="left", padx=(0, 8))
+        self.theme_button = self.secondary_button(preferences_row, self.theme_icon(), self.cycle_theme, 112)
+        self.theme_button.pack(side="left")
+
+        settings_card = self.panel(self.settings_page)
         self.text(settings_card, self.t("step_settings"), 14, True).pack(anchor="w", padx=15, pady=(12, 9))
         line = ctk.CTkFrame(settings_card, fg_color="transparent")
         line.pack(fill="x", padx=15, pady=(0, 13))
@@ -640,14 +737,17 @@ class App:
         if self.engine.get() == "cloud":
             self.cloud_fields.pack(fill="x")
 
-        advanced = self.panel(self.main)
-        arrow = "⌄" if self.advanced_open.get() else "›"
-        self.advanced_button = self.secondary_button(
-            advanced, arrow + "  " + self.t("advanced"), self.toggle_advanced, width=245)
-        self.advanced_button.pack(anchor="w", padx=12, pady=9)
-        # Keep advanced controls alive so toggling cannot steal entry focus.
-        self.advanced_content = ctk.CTkFrame(advanced, fg_color="transparent")
-        advanced_body = self.advanced_content
+        advanced_body = self.panel(self.settings_page)
+        self.text(advanced_body, self.t("output_settings"), 16, True).pack(anchor="w", padx=15, pady=(12, 5))
+        self.text(advanced_body, self.t("formats"), 12).pack(anchor="w", padx=15, pady=(0, 5))
+        formats_row = ctk.CTkFrame(advanced_body, fg_color="transparent")
+        formats_row.pack(anchor="w", padx=15, pady=(0, 5))
+        for fmt, enabled in self.formats.items():
+            ctk.CTkCheckBox(formats_row, text=fmt.upper(), width=76, variable=enabled,
+                            fg_color=c["accent"], hover_color=c["accent"],
+                            command=lambda fmt=fmt: self.save_format(fmt)).pack(side="left", padx=(0, 8))
+        self.text(advanced_body, self.t("formats_help"), 11, muted=True, wraplength=515,
+                  justify="left").pack(anchor="w", padx=15, pady=(0, 11))
         self.text(advanced_body, self.t("transcripts"), 11).pack(anchor="w", padx=15)
         self.choose_input(advanced_body, self.transcripts_dir, lambda: self.choose_dir(self.transcripts_dir), self.t("choose"))
         self.text(advanced_body, self.t("videos"), 11).pack(anchor="w", padx=15, pady=(9, 0))
@@ -662,15 +762,17 @@ class App:
             lambda: self.open_folder(Path(self.transcripts_dir.get())), 148).pack(side="left", padx=(0, 7))
         self.secondary_button(actions, self.t("logs"),
             lambda: self.open_folder(CONFIG_DIR), 140).pack(side="left")
-        self.secondary_button(advanced_body, self.t("webex_setup"),
-            self.browser_setup, 250).pack(anchor="w", padx=15, pady=(5, 9))
-        self.text(advanced_body, self.t("updates") + " · v" + VERSION, 11, True).pack(anchor="w", padx=15, pady=(12, 0))
-        self.secondary_button(advanced_body, self.t("check_update"), self.check_updates, 180).pack(anchor="w", padx=15, pady=7)
-        self.text(advanced_body, "Official: " + OFFICIAL_REPO, 10, muted=True).pack(anchor="w", padx=15, pady=(1, 12))
-        if self.advanced_open.get():
-            self.advanced_content.pack(fill="x")
+        settings_card.pack(before=appearance)
+        advanced_body.pack(before=settings_card)
+        connections = self.panel(self.settings_page)
+        self.text(connections, self.t("connections"), 16, True).pack(anchor="w", padx=15, pady=(12, 5))
+        links = ctk.CTkFrame(connections, fg_color="transparent")
+        links.pack(anchor="w", padx=15, pady=(0, 12))
+        self.secondary_button(links, self.t("webex_setup"), self.browser_setup, 155).pack(side="left")
+        self.secondary_button(links, self.t("check_update"), self.check_updates, 172).pack(side="left", padx=8)
+        self.text(links, "v" + VERSION, 11, muted=True).pack(side="left", padx=5)
 
-        run_card = self.panel(self.main)
+        run_card = self.panel(self.workspace_page)
         self.text(run_card, self.t("step_run"), 14, True).pack(anchor="w", padx=15, pady=(11,8))
         buttons = ctk.CTkFrame(run_card, fg_color="transparent")
         buttons.pack(fill="x", padx=15)
@@ -688,7 +790,35 @@ class App:
         self.status_label = self.text(run_card, self.status.get(), 10, muted=True)
         self.status_label.pack(anchor="w", padx=15, pady=(0,11))
         self.update_buttons()
-        self.text(self.main, "◆  " + self.t("privacy"), 10, muted=True).pack(anchor="center", pady=(0,7))
+        self.job_summary = self.text(self.workspace_page, "", 11, muted=True, wraplength=490)
+        self.job_summary.pack(anchor="w", pady=(0, 7))
+        self.show_page(self.current_page)
+
+    def save_format(self, fmt):
+        if not any(var.get() for var in self.formats.values()):
+            self.formats[fmt].set(True)
+        self.save_config()
+
+    def show_page(self, page):
+        if self.current_page == "settings" and page != "settings":
+            self.save_config()
+        self.current_page = page
+        colors = self.palette()
+        for key, frame, button in (("workspace", self.workspace_page, self.workspace_tab),
+                                   ("settings", self.settings_page, self.settings_tab)):
+            active = key == page
+            button.configure(state="disabled" if active else "normal",
+                             fg_color=colors["accent"] if active else colors["inset"],
+                             text_color_disabled=colors["accent_text"])
+            if key == page:
+                frame.pack(fill="both", expand=True)
+            else:
+                frame.pack_forget()
+        formats = " · ".join(fmt.upper() for fmt, enabled in self.formats.items() if enabled.get())
+        engine = self.t("local_engine") if self.engine.get() == "local" else self.t("cloud_engine")
+        self.job_summary.configure(text=f"{engine}    |    {formats}")
+        self.root.after_idle(lambda: self.scroll_area._parent_canvas.yview_moveto(0))
+
 
     def toggle_custom_name(self):
         if self.custom_name.get():
@@ -698,21 +828,21 @@ class App:
 
     def refresh_queue(self):
         if hasattr(self, "queue_label") and self.queue_label.winfo_exists():
-            names = [Path(x["source"]).name if not x["source"].startswith(("https://", "http://")) else "Webex / URL" for x in self.pending_sources[:3]]
-            label = f"{len(self.pending_sources)} · " + ", ".join(names) if names else self.t("queue_empty")
+            names = []
+            for item in self.pending_sources[:3]:
+                source = item["source"]
+                fallback = urlsplit(source).hostname if source.startswith(("http://", "https://")) else Path(source).name
+                names.append(item.get("name") or fallback or "URL")
+            size = len(self.pending_sources)
+            if size > len(names):
+                names.append(f"+{size - len(names)}")
+            label = f"{size} · " + " · ".join(names) if names else self.t("queue_empty")
             self.queue_label.configure(text=label)
 
     def enqueue_files(self):
         files = filedialog.askopenfilenames(filetypes=[("Media", "*.mp4 *.mkv *.webm *.mov *.mp3 *.m4a *.wav *.flac *.aac")])
         self.pending_sources.extend({"source":x,"name":None} for x in files)
         self.refresh_queue()
-
-    def enqueue_link(self):
-        from tkinter.simpledialog import askstring
-        url = askstring(APP, self.t("link_prompt"), parent=self.root)
-        if url and url.strip().startswith(("https://", "http://")):
-            self.pending_sources.append({"source":url.strip(),"name":None})
-            self.refresh_queue()
 
     def clear_queue(self):
         if not self.running:
@@ -772,16 +902,6 @@ class App:
             except Exception:
                 self.send("update_error")
         threading.Thread(target=task, daemon=True).start()
-
-    def toggle_advanced(self):
-        is_open = not self.advanced_open.get()
-        self.advanced_open.set(is_open)
-        if is_open:
-            self.advanced_content.pack(fill="x")
-        else:
-            self.advanced_content.pack_forget()
-        self.advanced_button.configure(
-            text=("⌄" if is_open else "›") + "  " + self.t("advanced"))
 
     def change_quality(self, index):
         self.model.set(QUALITY_CHOICES[index])
@@ -858,8 +978,9 @@ class App:
                     widget.configure(text=new_text)
             except (tk.TclError, ValueError, AttributeError):
                 pass
-        self.language_button.configure(text="EN" if self.ui_language.get() == "it" else "IT")
-        self.advanced_button.configure(text=("⌄" if self.advanced_open.get() else "›") + "  " + self.t("advanced"))
+        self.language_button.configure(text="English" if self.ui_language.get() == "it" else "Italiano")
+        self.theme_button.configure(text=self.theme_icon())
+        self.show_page(self.current_page)
         self.quality_label_map = {self.t("quality_" + key): key for key in QUALITY_CHOICES}
         self.quality_combo.configure(values=list(self.quality_label_map))
         self.quality_combo.set(self.t("quality_" + self.model.get()))
@@ -882,7 +1003,7 @@ class App:
         old = self._last_palette or self.palette()
         new = self.palette()
         self.apply_theme()
-        color_fields = ("fg_color", "bg_color", "text_color", "border_color",
+        color_fields = ("fg_color", "bg_color", "text_color", "text_color_disabled", "border_color",
                         "hover_color", "button_color", "button_hover_color",
                         "dropdown_fg_color", "dropdown_text_color", "progress_color",
                         "scrollbar_button_color", "scrollbar_button_hover_color")
@@ -898,7 +1019,7 @@ class App:
                 except (tk.TclError, ValueError, AttributeError, TypeError):
                     pass
         self._last_palette = new.copy()
-        self.theme_button.configure(text={"auto": "◐", "light": "☀", "dark": "☾"}[self.ui_theme.get()])
+        self.theme_button.configure(text=self.theme_icon())
 
     def update_preferences(self, _event=None):
         self.save_config()
@@ -1040,7 +1161,8 @@ class App:
         self.status.set(self.t("preparing"))
         self.update_buttons()
         job = {"source": source, "name": requested_name, "model": model, "spoken": self.spoken.get(), "keep": self.keep_video.get(), "transcripts": transcript_dir, "videos": video_dir, "engine": self.engine.get(), "cloud_provider":self.cloud_provider.get(),"cloud_model":self.cloud_model.get(),
-               "cloud_key_id":self.cloud_key_id.get()}
+               "cloud_key_id":self.cloud_key_id.get(),
+               "formats": tuple(fmt for fmt, selected in self.formats.items() if selected.get())}
         self.pending_sources.clear()
         self.refresh_queue()
         threading.Thread(target=self.worker_batch, args=(job, sources), daemon=True).start()
@@ -1205,38 +1327,52 @@ class App:
             duration = info.duration or 0
         return self.write_local_transcript(job, segments, duration, backend, network_media)
 
-    def write_local_transcript(self, job, segments, duration=0, backend="", network_media=False):
+    def write_local_transcript(self, job, segments, duration=0, backend="", network_media=False,
+                               approximate=False):
         folder = job["transcripts"]
-        txt_path, srt_path = folder / (job["name"] + ".txt"), folder / (job["name"] + ".srt")
+        paths = {fmt: folder / f"{job['name']}.{fmt}" for fmt in job.get("formats", OUTPUT_FORMATS)}
+        opened = {}
         count = 0
         completed = False
         self.log("TRANSCRIPTION_STARTED")
         try:
-            with txt_path.open("w", encoding="utf-8") as txt, srt_path.open("w", encoding="utf-8") as srt:
+            with ExitStack() as stack:
+                for fmt, path in paths.items():
+                    opened[fmt] = stack.enter_context(path.open("w", encoding="utf-8"))
+                if "md" in opened:
+                    opened["md"].write(f"# {job['name']}\n\n")
+                    if approximate:
+                        opened["md"].write(f"> {self.t('cloud_result')}\n\n")
                 for segment in segments:
                     self.check_cancel()
                     sentence = segment.text.strip()
                     if not sentence:
                         continue
                     count += 1
-                    txt.write(f"[{millis(segment.start)}] {sentence}\n")
-                    srt.write(f"{count}\n{millis(segment.start, True)} --> {millis(segment.end, True)}\n{sentence}\n\n")
-                    txt.flush()
-                    srt.flush()
+                    stamp = f"~{millis(segment.start).split('.')[0]} chunk" if approximate else millis(segment.start)
+                    if "txt" in opened:
+                        opened["txt"].write(f"[{stamp}] {sentence}\n")
+                    if "md" in opened:
+                        opened["md"].write(f"[{stamp}] {sentence}\n\n")
+                    if "srt" in opened:
+                        opened["srt"].write(
+                            f"{count}\n{millis(segment.start, True)} --> {millis(segment.end, True)}\n{sentence}\n\n")
+                    for stream in opened.values():
+                        stream.flush()
                     if duration:
                         start, portion = (35, 65) if network_media else (0, 100)
                         self.send("progress", start + min(1, segment.end / duration) * portion)
                     if backend:
                         self.send("status", f"{self.t('transcribing')} · {backend} · {millis(segment.end)}")
-            self.check_cancel()
+                self.check_cancel()
             completed = True
         finally:
             if not completed:
-                for file in (txt_path, srt_path):
-                    if file.exists():
-                        file.replace(file.with_name(file.stem + ".partial" + file.suffix))
+                for fmt in opened:
+                    file = paths[fmt]
+                    file.replace(file.with_name(file.stem + ".partial" + file.suffix))
         self.log("TRANSCRIPTION_FINISHED")
-        return txt_path, srt_path
+        return paths
 
     def resolve_name(self, job, media, metadata_title=None, reserved=()):
         desired = job["name"] or metadata_title or media.stem
@@ -1344,8 +1480,7 @@ class App:
                     assign(device)
                     try:
                         segments = (SimpleNamespace(start=a, end=b, text=text) for a, b, text in items)
-                        txt, _ = self.write_local_transcript(jobs[index], segments)
-                        self.write_markdown(txt, jobs[index]["name"])
+                        self.write_local_transcript(jobs[index], segments)
                         self.log("BATCH_ITEM_SUCCESS")
                     except JobCancelled:
                         raise
@@ -1379,46 +1514,32 @@ class App:
 
     def transcribe_engine(self, job, media, network_media):
         if job["engine"] != "cloud":
-            txt_path, srt_path = self.transcribe(job, media, network_media)
-            self.write_markdown(txt_path, job["name"])
+            self.transcribe(job, media, network_media)
             return
         self.send("status", self.t("transcribing"))
-        folder = job["transcripts"]
-        txt = folder / (job["name"] + ".txt")
-        md = folder / (job["name"] + ".md")
-        completed = False
-        try:
-            def progress(p):
-                base, span = (35, 65) if network_media else (0, 100)
-                self.send("progress", base + span * p / 100)
-            try:
-                secret = self.vault.get_secret(job["cloud_key_id"])
-                if not secret:
-                    raise ProviderError("credential_missing")
-                lines = transcribe_long(media, provider=job["cloud_provider"],
-                    model=job["cloud_model"],secret=secret,language=job["spoken"],
-                    output_dir=folder,job_id=job["name"],key_id=job["cloud_key_id"],
-                    progress=progress,cancelled=self.stop_event.is_set)
-            except InterruptedError:
-                raise JobCancelled()
-            except ProviderError as err:
-                self.log("CLOUD_"+err.category.upper())
-                raise RuntimeError("Cloud provider error: "+err.category) from None
-            self.check_cancel()
-            txt.write_text("\n".join(lines) + "\n", encoding="utf-8")
-            md.write_text("# " + job["name"] + "\n\n> " + self.t("cloud_result") + "\n\n" +
-                          "\n\n".join(lines) + "\n", encoding="utf-8")
-            completed = True
-        finally:
-            if not completed:
-                for path in (txt, md):
-                    if path.exists():
-                        path.rename(path.with_name(path.stem + ".partial" + path.suffix))
 
-    def write_markdown(self, txt_path, title):
-        content = txt_path.read_text(encoding="utf-8")
-        (txt_path.parent / (title + ".md")).write_text(
-            "# " + title + "\n\n" + content.replace("\n", "\n\n"), encoding="utf-8")
+        def progress(value):
+            start, span = (35, 65) if network_media else (0, 100)
+            self.send("progress", start + span * value / 100)
+
+        try:
+            secret = self.vault.get_secret(job["cloud_key_id"])
+            if not secret:
+                raise ProviderError("credential_missing")
+            blocks = transcribe_long(
+                media, provider=job["cloud_provider"], model=job["cloud_model"],
+                secret=secret, language=job["spoken"], output_dir=job["transcripts"],
+                job_id=job["name"], key_id=job["cloud_key_id"], progress=progress,
+                cancelled=self.stop_event.is_set, timed=True,
+            )
+        except InterruptedError:
+            raise JobCancelled()
+        except ProviderError as err:
+            self.log("CLOUD_" + err.category.upper())
+            raise RuntimeError("Cloud provider error: " + err.category) from None
+        self.check_cancel()
+        segments = (SimpleNamespace(start=start, end=end, text=text) for start, end, text in blocks)
+        self.write_local_transcript(job, segments, approximate=True)
 
     def on_close(self):
         if self.running:

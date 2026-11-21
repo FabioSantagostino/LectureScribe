@@ -105,7 +105,7 @@ def chunks(media: Path, output: Path, *, seconds=360, overlap=1.5):
             raise ProviderError('audio_conversion')
         if target.stat().st_size > 20_000_000:
             raise ProviderError('file_too_large')
-        yield i, count, start, target
+        yield i, count, start, start + duration, target
 
 
 def transcribe_chunk(provider, model, secret, audio:Path, language='auto'):
@@ -171,7 +171,8 @@ def stitch(previous, current):
 
 
 def transcribe_long(media, *, provider, model, secret, language='auto', output_dir,
-                    job_id, key_id="", progress=lambda _:None, cancelled=lambda:False):
+                    job_id, key_id="", progress=lambda _:None, cancelled=lambda:False,
+                    timed=False):
     """Persistent per-chunk checkpoint, resumable without repeating completed paid uploads."""
     output_dir = Path(output_dir)
     checkpoint = output_dir / f'{job_id}.cloud-checkpoint.json'
@@ -187,8 +188,10 @@ def transcribe_long(media, *, provider, model, secret, language='auto', output_d
     # Do not reuse results across a different model, key/provider or modified recording.
     if saved.get('signature') != signature:
         saved = {'signature':signature,'completed':{}}
+    boundaries = {}
     with tempfile.TemporaryDirectory(prefix='scribelane_chunks_') as td:
-        for i, total, start, part in chunks(media, Path(td)):
+        for i, total, start, end, part in chunks(media, Path(td)):
+            boundaries[str(i)] = (start, end)
             if cancelled():
                 raise InterruptedError('Cancelled')
             key = str(i)
@@ -204,6 +207,11 @@ def transcribe_long(media, *, provider, model, secret, language='auto', output_d
         segment = saved['completed'][idx]
         content = stitch(previous, segment['text']) if previous else segment['text']
         previous = segment['text']
+        if timed:
+            start, end = boundaries[idx]
+            next_chunk = boundaries.get(str(int(idx) + 1))
+            lines.append((start, min(end, next_chunk[0]) if next_chunk else end, content))
+            continue
         h,rem = divmod(int(segment['offset']),3600)
         m,s = divmod(rem,60)
         lines.append(f'[~{h:02}:{m:02}:{s:02} chunk] {content}')

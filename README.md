@@ -14,8 +14,8 @@ Se provieni da una versione precedente alla 1.6.0, scarica lo ZIP completo e avv
 
 ## Trascrivere un file o un link HLS diretto
 
-1. Seleziona un file o incolla il link `.m3u8`. Per aggiungere più elementi usa **+ File** o **+ Link** nella coda.
-2. Scegli il motore di trascrizione, la lingua del parlato e le cartelle di destinazione. Con Whisper puoi scegliere la qualità. In modalità cloud scegli il provider e il modello.
+1. Seleziona un file o incolla il link `.m3u8`. Per più registrazioni usa **+ File** o **Incolla link…**. Incolla un link per riga. Per assegnare un nome, usa `Nome | link`. Puoi rimuovere una registrazione cancellando la sua riga prima di salvare.
+2. Apri **Impostazioni** per scegliere il motore, la lingua del parlato, le cartelle di destinazione e i formati da esportare. Puoi attivare TXT, Markdown e SRT in qualsiasi combinazione. Con Whisper puoi scegliere la qualità. In modalità cloud scegli il provider e il modello.
 3. Premi **Avvia trascrizione**. Il modello Whisper viene scaricato al primo utilizzo. L'opzione **Conserva il video scaricato** salva una copia del download nella cartella indicata. I file locali originali vengono conservati.
 
 ## Trascrivere da un link Webex `/playback`
@@ -53,7 +53,7 @@ Se ScribeLane segnala che il download diretto non è riuscito, puoi attivare l�
 
 In modalità **Cloud**, scegli Groq, OpenAI o Gemini. Aggiungi e verifica una chiave da **Gestisci chiavi API** e conferma l'invio dell'audio prima di avviare la coda. Windows Credential Manager conserva le chiavi. La trascrizione cloud usa blocchi MP3 con una breve sovrapposizione e salva checkpoint locali per riprendere i lavori interrotti. Le richieste possono generare costi presso il provider.
 
-Whisper locale esporta TXT, Markdown e SRT. I provider cloud esportano TXT e Markdown con timestamp approssimativi per blocco. In modalità locale l'audio viene trascritto sul dispositivo.
+In modalità locale l'audio viene trascritto sul dispositivo e i tempi degli SRT seguono i segmenti riconosciuti. In modalità cloud, tutti i formati usano i tempi approssimativi dei blocchi audio. Un SRT cloud può mostrare un intero blocco di testo nello stesso sottotitolo.
 
 ## Accelerazione locale Intel con OpenVINO
 

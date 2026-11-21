@@ -40,7 +40,7 @@ class Services(unittest.TestCase):
             output=Path(td)/'out';output.mkdir()
             count={'n':0}
             def mock_chunks(*args,**kwargs):
-                for i in range(3):yield i,3,i*10,media
+                for i in range(3):yield i,3,i*10,i*10+11,media
             def mock_transcribe(*args,**kwargs):
                 count['n']+=1
                 return 'text'
@@ -48,6 +48,8 @@ class Services(unittest.TestCase):
                 args=dict(provider='groq',model='whisper-large-v3-turbo',secret='secret',output_dir=output,job_id='test',key_id='one')
                 self.assertEqual(len(transcribe_long(media,**args)),3)
                 self.assertEqual(len(transcribe_long(media,**args)),3)
+                self.assertEqual(transcribe_long(media, **args, timed=True),
+                                 [(0, 10, 'text'), (10, 20, 'text'), (20, 31, 'text')])
                 self.assertEqual(count['n'],3)
                 transcribe_long(media,**{**args,'key_id':'two'})
                 self.assertEqual(count['n'],6)
