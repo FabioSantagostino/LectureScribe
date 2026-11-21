@@ -1,4 +1,8 @@
-# LectureScribe v1.5.1
+# LectureScribe v1.5.2
+
+- **Correzione NPU.** LectureScribe invia a Whisper blocchi più brevi sulla NPU. Se la cache del decoder si esaurisce comunque, ritenta il lavoro sulla GPU Intel, se disponibile, prima di tornare alla CPU.
+
+## Novità introdotte in v1.5.1
 
 - **Webex prova prima il download diretto con yt-dlp.** L’estensione interviene solo se il link `/playback` non è scaricabile direttamente. Puoi continuare a usare playlist HLS e file locali senza estensione.
 - **Impostazione del browser più chiara.** I browser Chromium compatibili senza una voce dedicata usano la categoria **Altri browser Chromium**.

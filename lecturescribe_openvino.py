@@ -173,7 +173,16 @@ def transcribe_if_available(media: Path, model: str, language: str | None,
             raise OpenVINOUnavailable('CPU_BENCHMARK')
         if pipe is None:
             pipe = make_pipe(model_dir, device)
-    return transcribe_on_device(media, language, pipe, device, cancelled, on_status), device
+    try:
+        return transcribe_on_device(media, language, pipe, device, cancelled, on_status), device
+    except OpenVINOUnavailable as exc:
+        if exc.reason != 'NPU_KV_CACHE' or 'GPU' not in available:
+            raise
+        if cancelled():
+            raise InterruptedError()
+        on_status('ov_retry_gpu')
+        pipe = make_pipe(model_dir, 'GPU')
+        return transcribe_on_device(media, language, pipe, 'GPU', cancelled, on_status), 'GPU'
 
 
 def transcribe_on_device(media, language, pipe, device, cancelled, on_status=lambda phase: None):
@@ -182,8 +191,11 @@ def transcribe_on_device(media, language, pipe, device, cancelled, on_status=lam
         convert_audio(media, full_path)
         if cancelled():
             raise InterruptedError()
-        chunk_samples = 30 * 16000
         overlap_samples = 1 * 16000
+        # Leave room for language detection and timestamp tokens on the NPU's
+        # bounded Whisper decoder cache. Count overlap in the input limit.
+        window_samples = (12 if device == 'NPU' else 30) * 16000
+        chunk_samples = window_samples - overlap_samples
         output = []
         on_status(device)
         with wave.open(str(full_path), 'rb') as audio:
@@ -193,7 +205,12 @@ def transcribe_on_device(media, language, pipe, device, cancelled, on_status=lam
                 end = min(audio.getnframes(), cursor + chunk_samples)
                 start = max(0, cursor - overlap_samples)
                 audio.setpos(start)
-                result = generate(pipe, decode_pcm(audio.readframes(end - start)), language)
+                try:
+                    result = generate(pipe, decode_pcm(audio.readframes(end - start)), language)
+                except RuntimeError as exc:
+                    if device == 'NPU' and 'kv-cache is full' in str(exc).lower():
+                        raise OpenVINOUnavailable('NPU_KV_CACHE') from exc
+                    raise
                 chunks = getattr(result, 'chunks', None) or ()
                 if not chunks and str(result).strip():
                     raise OpenVINOUnavailable('TIMESTAMPS_UNAVAILABLE')
@@ -222,7 +239,7 @@ def prepare_parallel(media, model, language, models_root, cancelled, on_status):
             if cancelled():
                 raise InterruptedError()
             path = Path(temp) / f'{index}.wav'
-            convert_audio(source, path, seconds=30)
+            convert_audio(source, path, seconds=12)
             samples.append(read_audio(path))
 
     def run(pipe, sample):

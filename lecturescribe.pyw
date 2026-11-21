@@ -88,6 +88,7 @@ I18N['it'].update({
     'webex_setup': 'Browser per Webex',
     'ov_model': 'Download del modello OpenVINO…',
     'ov_benchmark': 'Verifica dei dispositivi OpenVINO…',
+    'ov_retry_gpu': 'NPU: cache esaurita. Nuovo tentativo su OpenVINO GPU…',
     'webex_setup_help': 'Scegli il browser predefinito di Windows. LectureScribe lo usa solo se il download diretto fallisce.',
     'webex_chromium_help': 'Se un link Webex richiede il browser, puoi usare l’estensione Chromium inclusa. Vedi il README.',
     'webex_firefox_help': 'Se un link Webex richiede il browser, puoi caricare l’estensione da about:debugging.',
@@ -103,6 +104,7 @@ I18N['en'].update({
     'webex_setup': 'Webex browser',
     'ov_model': 'Downloading the OpenVINO model…',
     'ov_benchmark': 'Checking OpenVINO devices…',
+    'ov_retry_gpu': 'NPU cache is full. Retrying with OpenVINO GPU…',
     'webex_setup_help': 'Select your Windows default browser. LectureScribe uses it only if direct download fails.',
     'webex_chromium_help': 'If a Webex link needs the browser, use the included Chromium extension. See the README.',
     'webex_firefox_help': 'If a Webex link needs the browser, load the extension from about:debugging.',
@@ -1167,6 +1169,8 @@ class App:
                 self.log("OPENVINO_ACTIVE_" + phase)
                 self.send("status", f"{self.t('transcribing')} · OpenVINO {phase}")
             else:
+                if phase == "ov_retry_gpu":
+                    self.log("OPENVINO_NPU_KV_CACHE_RETRY_GPU")
                 self.send("status", self.t(phase))
 
         try:

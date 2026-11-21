@@ -17,7 +17,7 @@ from pathlib import Path
 
 import requests
 
-VERSION = '1.5.1'
+VERSION = '1.5.2'
 ASSET_NAME = 'LectureScribe-Windows-x64.zip'
 
 
