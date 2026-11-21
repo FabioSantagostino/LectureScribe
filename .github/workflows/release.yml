@@ -36,19 +36,24 @@ jobs:
       - name: Build EXE
         shell: pwsh
         run: |
-          python -m PyInstaller --noconfirm --clean --onefile --windowed --name LectureScribe --collect-all faster_whisper --collect-all ctranslate2 --collect-all av --collect-all yt_dlp --collect-all customtkinter --collect-all imageio_ffmpeg --collect-all requests --collect-all keyring --collect-all google.genai --collect-all playwright lecturescribe.pyw
+          python -m PyInstaller --noconfirm --clean --onefile --windowed --name LectureScribe --collect-all faster_whisper --collect-all ctranslate2 --collect-all av --collect-all yt_dlp --collect-all customtkinter --collect-all imageio_ffmpeg --collect-all requests --collect-all keyring --collect-all google.genai lecturescribe.pyw
           if (!(Test-Path 'dist/LectureScribe.exe')) { throw 'EXE missing' }
       - name: Package download
         shell: pwsh
         run: |
           Copy-Item README.md dist/README.md
           Copy-Item LICENSE dist/LICENSE
-          Compress-Archive -Path dist/LectureScribe.exe,dist/README.md,dist/LICENSE -DestinationPath LectureScribe-Windows-x64.zip -Force
+          Copy-Item browser-extension dist/browser-extension -Recurse
+          New-Item -ItemType Directory dist/browser-extension/firefox
+          Copy-Item browser-extension/background.js,browser-extension/bootstrap.js dist/browser-extension/firefox
+          Move-Item dist/browser-extension/manifest.firefox.json dist/browser-extension/firefox/manifest.json
+          Compress-Archive -Path dist/LectureScribe.exe,dist/README.md,dist/LICENSE,dist/browser-extension -DestinationPath LectureScribe-Windows-x64.zip -Force
           Add-Type -AssemblyName System.IO.Compression.FileSystem
           $zip = [System.IO.Compression.ZipFile]::OpenRead((Resolve-Path 'LectureScribe-Windows-x64.zip').Path)
           try {
             $names = @($zip.Entries | ForEach-Object { $_.FullName })
             if ('LectureScribe.exe' -notin $names) { throw 'EXE missing from release ZIP' }
+            if ('browser-extension/manifest.json' -notin $names -or 'browser-extension/firefox/manifest.json' -notin $names) { throw 'Webex extension missing from release ZIP' }
           }
           finally { $zip.Dispose() }
       - name: Upload build artifact

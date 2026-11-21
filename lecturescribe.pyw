@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import json
-from io import StringIO
 import os
 import re
 import sys
@@ -19,14 +18,10 @@ import customtkinter as ctk
 
 import imageio_ffmpeg
 import yt_dlp
-from urllib.parse import urlsplit
 from faster_whisper import WhisperModel
 from yt_dlp.utils import DownloadError
 from lecturescribe_credentials import Vault
-from lecturescribe_webex import (
-    WebexBrowserError, add_to_ytdlp_cookiejar, inspect_webex,
-    is_webex_playback, logout as logout_webex_profile,
-)
+from lecturescribe_webex import WebexBrowserError, capture_playlist, is_webex_playback
 from lecturescribe_openvino import (transcribe_if_available, OpenVINOUnavailable)
 from lecturescribe_providers import MODELS, verify_key, transcribe_long, ProviderError, available_gemini_models
 from lecturescribe_updates import VERSION, fetch_release, stage_update, launch_installer, version_tuple, run_update_mode
@@ -39,7 +34,6 @@ OFFICIAL_REPO = "FabioSantagostino/LectureScribe"
 APP = "LectureScribe"
 CONFIG_DIR = Path(os.getenv("APPDATA", str(Path.home()))) / APP
 CONFIG_FILE = CONFIG_DIR / "settings.json"
-WEBEX_PROFILE = CONFIG_DIR / "webex_browser_profile"
 OV_MODELS = CONFIG_DIR / "openvino_models"
 OV_BENCH = CONFIG_DIR / "openvino_benchmarks"
 DEFAULT_DIR = Path.home() / "Documents" / APP
@@ -66,15 +60,13 @@ def windows_dark_mode() -> bool:
     except (OSError, ValueError):
         return False
 
-BROWSER_MAP = {"Chrome": "chrome", "Edge": "edge", "Firefox": "firefox", "Brave": "brave", "Opera": "opera", "Vivaldi": "vivaldi", "Chromium": "chromium", "Whale": "whale"}
-AUTH_WORDS = ("registered users", "login required", "login to", "sign in", "authentication required", "cookies-from-browser", "cookies from browser", "http error 401", "http error 403", "unauthorized", "forbidden")
 
 I18N = {
  "it": {
-  "tagline":"Trascrizione locale di lezioni e registrazioni", "source":"Link Webex, URL HLS o file audio/video", "browse":"Sfoglia", "title":"Nome della lezione", "transcripts":"Cartella trascrizioni", "videos":"Cartella video conservati", "choose":"Scegli", "keep":"Conserva il video scaricato", "safety":"I file locali originali non vengono mai eliminati automaticamente.", "model":"Modello Whisper", "speech":"Lingua del parlato", "automatic":"Rilevamento automatico", "italian":"Italiano", "english":"Inglese", "theme":"Tema", "dark":"Scuro", "light":"Chiaro", "lang":"Interfaccia", "start":"Avvia trascrizione", "stop":"Interrompi", "open":"Apri trascrizioni", "progress":"Avanzamento", "ready":"Pronto", "preparing":"Preparazione...", "downloading":"Download in corso...", "loading":"Caricamento del modello (primo avvio: download)...", "transcribing":"Trascrizione", "finished":"Trascrizione completata", "stopped":"Operazione interrotta. Le eventuali trascrizioni parziali sono state conservate.", "error":"Errore", "missing":"Inserisci un URL o seleziona un file.", "notfound":"File non trovato.", "auth_title":"Autenticazione Webex", "auth_explain":"La registrazione richiede l'accesso. Seleziona il browser in cui sei già autenticato, oppure usa un file cookie Netscape.", "auth_browser":"Browser", "auth_continue":"Continua", "cancel":"Annulla", "cookies":"File cookie Netscape (anche Samsung Browser)", "samsung":"Samsung Browser (file cookie)", "no_browsers":"Nessun browser supportato rilevato: puoi usare un file cookie.", "auth_failed":"Accesso non riuscito. Controlla il login nel browser, il profilo o il file cookie.", "download_failed":"Download fallito. Controlla il link e la connessione. Per un URL HLS scaduto, recuperane uno nuovo.", "processing_failed":"Errore nell'elaborazione. Consulta il log diagnostico locale (senza URL o cookie).", "close_running":"L'elaborazione è in corso. Vuoi interromperla e chiudere al termine dell'interruzione?", "model_tip":"Turbo: equilibrio consigliato. Large-v3: più lento. I modelli .en sono solo per inglese.", "output_saved":"File salvati in:", "logs":"Apri cartella log", "model_error":"Modello non disponibile oppure download fallito.", "select_folder":"Seleziona cartella", "permission":"Impossibile scrivere nella cartella di destinazione.", "browser_tip":"La lettura dei cookie può fallire per le protezioni del browser. Non condividere mai file cookie.", "video_copy":"Conservazione del video...", "bad_source":"Sono supportati file locali e URL http(s).", "no_media":"Il download non ha prodotto un file multimediale.", "privacy":"Trascrizione locale · nessun audio inviato a servizi AI", "duplicate":"Nome già in uso: scelto un nome alternativo.", "model_warn":"Questo modello .en riconosce soltanto l'inglese. Continuare?", "yes":"Sì", "no":"No"
+  "tagline":"Trascrizione locale di lezioni e registrazioni", "source":"Link Webex, URL HLS o file audio/video", "browse":"Sfoglia", "title":"Nome della lezione", "transcripts":"Cartella trascrizioni", "videos":"Cartella video conservati", "choose":"Scegli", "keep":"Conserva il video scaricato", "safety":"I file locali originali non vengono mai eliminati automaticamente.", "model":"Modello Whisper", "speech":"Lingua del parlato", "automatic":"Rilevamento automatico", "italian":"Italiano", "english":"Inglese", "theme":"Tema", "dark":"Scuro", "light":"Chiaro", "lang":"Interfaccia", "start":"Avvia trascrizione", "stop":"Interrompi", "open":"Apri trascrizioni", "progress":"Avanzamento", "ready":"Pronto", "preparing":"Preparazione...", "downloading":"Download in corso...", "loading":"Caricamento del modello (primo avvio: download)...", "transcribing":"Trascrizione", "finished":"Trascrizione completata", "stopped":"Operazione interrotta. Le eventuali trascrizioni parziali sono state conservate.", "error":"Errore", "missing":"Inserisci un URL o seleziona un file.", "notfound":"File non trovato.", "cancel":"Annulla", "download_failed":"Download fallito. Controlla il link e la connessione. Per un URL HLS scaduto, recuperane uno nuovo.", "processing_failed":"Errore nell'elaborazione. Consulta il log diagnostico locale (senza URL o cookie).", "close_running":"L'elaborazione è in corso. Vuoi interromperla e chiudere al termine dell'interruzione?", "model_tip":"Turbo: equilibrio consigliato. Large-v3: più lento. I modelli .en sono solo per inglese.", "output_saved":"File salvati in:", "logs":"Apri cartella log", "model_error":"Modello non disponibile oppure download fallito.", "select_folder":"Seleziona cartella", "permission":"Impossibile scrivere nella cartella di destinazione.", "video_copy":"Conservazione del video...", "bad_source":"Sono supportati file locali e URL http(s).", "no_media":"Il download non ha prodotto un file multimediale.", "privacy":"Trascrizione locale · nessun audio inviato a servizi AI", "duplicate":"Nome già in uso: scelto un nome alternativo.", "model_warn":"Questo modello .en riconosce soltanto l'inglese. Continuare?", "yes":"Sì", "no":"No"
  },
  "en": {
-  "tagline":"Local transcription of lectures and recordings", "source":"Webex link, HLS URL or local media", "browse":"Browse", "title":"Lecture name", "transcripts":"Transcripts folder", "videos":"Retained videos folder", "choose":"Choose", "keep":"Keep downloaded video", "safety":"Original local media files are never automatically deleted.", "model":"Whisper model", "speech":"Spoken language", "automatic":"Auto-detect", "italian":"Italian", "english":"English", "theme":"Theme", "dark":"Dark", "light":"Light", "lang":"Interface", "start":"Start transcription", "stop":"Cancel", "open":"Open transcripts", "progress":"Progress", "ready":"Ready", "preparing":"Preparing...", "downloading":"Downloading...", "loading":"Loading model (first run downloads it)...", "transcribing":"Transcribing", "finished":"Transcription completed", "stopped":"Cancelled. Any partial transcripts were retained.", "error":"Error", "missing":"Enter a URL or select a file.", "notfound":"File not found.", "auth_title":"Webex authentication", "auth_explain":"This recording requires sign-in. Select a browser with an active session or choose a Netscape cookie file.", "auth_browser":"Browser", "auth_continue":"Continue", "cancel":"Cancel", "cookies":"Netscape cookie file (also Samsung Browser)", "samsung":"Samsung Browser (cookie file)", "no_browsers":"No supported browser detected; you can use a cookie file.", "auth_failed":"Authentication failed. Check your browser session, profile or cookie file.", "download_failed":"Download failed. Check the link and connection. Refresh expired HLS URLs.", "processing_failed":"Processing failed. See the local diagnostics log (no URLs or cookies).", "close_running":"A job is running. Cancel and close once it has stopped?", "model_tip":"Turbo: recommended balance. Large-v3: slower. .en models are English-only.", "output_saved":"Files saved in:", "logs":"Open logs folder", "model_error":"Model unavailable or model download failed.", "select_folder":"Choose folder", "permission":"Cannot write to output folder.", "browser_tip":"Browser security may prevent cookie extraction. Never share cookie files.", "video_copy":"Saving downloaded video...", "bad_source":"Local media and http(s) URLs are supported.", "no_media":"The download did not produce a media file.", "privacy":"Local transcription · no audio uploaded to AI services", "duplicate":"Name already used; selected an alternate name.", "model_warn":"This .en model only recognizes English. Continue?", "yes":"Yes", "no":"No"
+  "tagline":"Local transcription of lectures and recordings", "source":"Webex link, HLS URL or local media", "browse":"Browse", "title":"Lecture name", "transcripts":"Transcripts folder", "videos":"Retained videos folder", "choose":"Choose", "keep":"Keep downloaded video", "safety":"Original local media files are never automatically deleted.", "model":"Whisper model", "speech":"Spoken language", "automatic":"Auto-detect", "italian":"Italian", "english":"English", "theme":"Theme", "dark":"Dark", "light":"Light", "lang":"Interface", "start":"Start transcription", "stop":"Cancel", "open":"Open transcripts", "progress":"Progress", "ready":"Ready", "preparing":"Preparing...", "downloading":"Downloading...", "loading":"Loading model (first run downloads it)...", "transcribing":"Transcribing", "finished":"Transcription completed", "stopped":"Cancelled. Any partial transcripts were retained.", "error":"Error", "missing":"Enter a URL or select a file.", "notfound":"File not found.", "cancel":"Cancel", "download_failed":"Download failed. Check the link and connection. Refresh expired HLS URLs.", "processing_failed":"Processing failed. See the local diagnostics log (no URLs or cookies).", "close_running":"A job is running. Cancel and close once it has stopped?", "model_tip":"Turbo: recommended balance. Large-v3: slower. .en models are English-only.", "output_saved":"Files saved in:", "logs":"Open logs folder", "model_error":"Model unavailable or model download failed.", "select_folder":"Choose folder", "permission":"Cannot write to output folder.", "video_copy":"Saving downloaded video...", "bad_source":"Local media and http(s) URLs are supported.", "no_media":"The download did not produce a media file.", "privacy":"Local transcription · no audio uploaded to AI services", "duplicate":"Name already used; selected an alternate name.", "model_warn":"This .en model only recognizes English. Continue?", "yes":"Yes", "no":"No"
  }
 }
 
@@ -83,9 +75,38 @@ I18N["en"].update({'step_source': '01  Choose recording', 'step_source_help': 'P
 
 
 I18N["it"].update({
- "queue":"Coda di trascrizione", "add_files":"+ File", "add_link":"+ Link", "clear_queue":"Svuota", "queue_empty":"Nessun elemento in coda", "queue_count":"Elementi in coda", "link_prompt":"Incolla il link Webex / HLS", "backend":"Motore di trascrizione", "local_engine":"Locale · Whisper", "cloud_engine":"Cloud · OpenAI API", "api_key":"Chiave API OpenAI (solo per questa sessione)", "cloud_warning":"Modalità cloud: l'audio sarà inviato a OpenAI. Richiede chiave API e può avere costi. I timestamp sono approssimativi (blocchi), nessun SRT cloud.", "auth_remember":"Ricorda metodo di accesso per i prossimi video", "updates":"Aggiornamenti", "update_repo":"Repository GitHub (owner/repo)", "check_update":"Cerca aggiornamenti", "update_found":"Nuova versione disponibile", "no_update":"Hai già l'ultima versione", "install_update":"Scaricare e installare l'aggiornamento? L'app verrà riavviata.", "update_error":"Aggiornamento non riuscito. Controlla repository e connessione.", "cloud_confirm":"La registrazione audio sarà caricata su OpenAI e potrebbe essere fatturata. Continuare?", "cloud_key_missing":"Inserisci la chiave API per il servizio cloud.", "cloud_result":"La trascrizione cloud usa timestamp di blocco approssimativi, non sottotitoli sincronizzati.", "batch_finished":"Elaborazione della coda completata", "batch_failed":"Alcune registrazioni non sono state elaborate. Vedi log diagnostici."})
+ "queue":"Coda di trascrizione", "add_files":"+ File", "add_link":"+ Link", "clear_queue":"Svuota", "queue_empty":"Nessun elemento in coda", "queue_count":"Elementi in coda", "link_prompt":"Incolla il link Webex / HLS", "backend":"Motore di trascrizione", "local_engine":"Locale · Whisper", "cloud_engine":"Cloud · OpenAI API", "api_key":"Chiave API OpenAI (solo per questa sessione)", "cloud_warning":"Modalità cloud: l'audio sarà inviato a OpenAI. Richiede chiave API e può avere costi. I timestamp sono approssimativi (blocchi), nessun SRT cloud.", "updates":"Aggiornamenti", "update_repo":"Repository GitHub (owner/repo)", "check_update":"Cerca aggiornamenti", "update_found":"Nuova versione disponibile", "no_update":"Hai già l'ultima versione", "install_update":"Scaricare e installare l'aggiornamento? L'app verrà riavviata.", "update_error":"Aggiornamento non riuscito. Controlla repository e connessione.", "cloud_confirm":"La registrazione audio sarà caricata su OpenAI e potrebbe essere fatturata. Continuare?", "cloud_key_missing":"Inserisci la chiave API per il servizio cloud.", "cloud_result":"La trascrizione cloud usa timestamp di blocco approssimativi, non sottotitoli sincronizzati.", "batch_finished":"Elaborazione della coda completata", "batch_failed":"Alcune registrazioni non sono state elaborate. Vedi log diagnostici."})
 I18N["en"].update({
- "queue":"Transcription queue", "add_files":"+ Files", "add_link":"+ Link", "clear_queue":"Clear", "queue_empty":"No queued items", "queue_count":"Queued items", "link_prompt":"Paste Webex / HLS URL", "backend":"Transcription engine", "local_engine":"Local · Whisper", "cloud_engine":"Cloud · OpenAI API", "api_key":"OpenAI API key (session only)", "cloud_warning":"Cloud mode sends audio to OpenAI. Requires a billed API key. Timestamps are approximate chunk markers, no cloud SRT.", "auth_remember":"Remember authentication method for future videos", "updates":"Updates", "update_repo":"GitHub repository (owner/repo)", "check_update":"Check for updates", "update_found":"A new version is available", "no_update":"You're up to date", "install_update":"Download and install the update? The app will restart.", "update_error":"Update failed. Check repository and connection.", "cloud_confirm":"Audio will be uploaded to OpenAI and may incur charges. Continue?", "cloud_key_missing":"Enter your cloud API key.", "cloud_result":"Cloud timestamps mark approximate chunks, not synchronized subtitles.", "batch_finished":"Queue finished", "batch_failed":"Some recordings failed. See diagnostics."})
+ "queue":"Transcription queue", "add_files":"+ Files", "add_link":"+ Link", "clear_queue":"Clear", "queue_empty":"No queued items", "queue_count":"Queued items", "link_prompt":"Paste Webex / HLS URL", "backend":"Transcription engine", "local_engine":"Local · Whisper", "cloud_engine":"Cloud · OpenAI API", "api_key":"OpenAI API key (session only)", "cloud_warning":"Cloud mode sends audio to OpenAI. Requires a billed API key. Timestamps are approximate chunk markers, no cloud SRT.", "updates":"Updates", "update_repo":"GitHub repository (owner/repo)", "check_update":"Check for updates", "update_found":"A new version is available", "no_update":"You're up to date", "install_update":"Download and install the update? The app will restart.", "update_error":"Update failed. Check repository and connection.", "cloud_confirm":"Audio will be uploaded to OpenAI and may incur charges. Continue?", "cloud_key_missing":"Enter your cloud API key.", "cloud_result":"Cloud timestamps mark approximate chunks, not synchronized subtitles.", "batch_finished":"Queue finished", "batch_failed":"Some recordings failed. See diagnostics."})
+
+WEBEX_ERRORS = {"webex_extension_missing", "webex_capture_failed", "webex_browser_failed"}
+I18N['it'].update({
+    'webex_setup': 'Browser per Webex',
+    'webex_setup_help': 'Indica il tuo browser predefinito in Windows. LectureScribe userà la finestra e la sessione già aperte.',
+    'webex_chromium_help': 'Carica una volta l’estensione Chromium inclusa nella cartella browser-extension. Vedi il README.',
+    'webex_firefox_help': 'Carica l’estensione Firefox da about:debugging. Vedi il README per la durata dell’installazione.',
+    'webex_other': 'Altro browser Chromium',
+    'webex_save': 'Salva browser',
+    'webex_connect': 'Apertura del browser predefinito…',
+    'webex_wait': 'Avvia il video nella scheda Webex per rilevare la playlist…',
+    'webex_extension_missing': 'Estensione LectureScribe non rilevata. Attivala nel browser predefinito e riprova.',
+    'webex_capture_failed': 'Playlist non rilevata. Verifica che il video Webex parta, oppure incolla il link HLS diretto.',
+    'webex_browser_failed': 'Impossibile aprire il browser predefinito.',
+})
+I18N['en'].update({
+    'webex_setup': 'Webex browser',
+    'webex_setup_help': 'Select your Windows default browser. LectureScribe will use that browser and its current session.',
+    'webex_chromium_help': 'Load the included Chromium extension from browser-extension once. See the README.',
+    'webex_firefox_help': 'Load the Firefox extension from about:debugging. See the README for installation lifetime.',
+    'webex_other': 'Other Chromium browser',
+    'webex_save': 'Save browser',
+    'webex_connect': 'Opening the default browser…',
+    'webex_wait': 'Start the video in the Webex tab to detect the playlist…',
+    'webex_extension_missing': 'LectureScribe extension not detected. Enable it in the default browser and retry.',
+    'webex_capture_failed': 'Playlist not detected. Make sure the Webex video plays, or paste a direct HLS link.',
+    'webex_browser_failed': 'Could not open the default browser.',
+})
+
 
 class JobCancelled(Exception):
     pass
@@ -104,30 +125,6 @@ def clean_name(name: str) -> str:
     return name[:90] or datetime.now().strftime("Lecture_%Y%m%d_%H%M%S")
 
 
-def browser_candidates() -> dict[str, tuple]:
-    local = Path(os.getenv("LOCALAPPDATA", ""))
-    roaming = Path(os.getenv("APPDATA", ""))
-    locations = {
-        "Chrome": local / "Google/Chrome/User Data",
-        "Edge": local / "Microsoft/Edge/User Data",
-        "Firefox": roaming / "Mozilla/Firefox",
-        "Brave": local / "BraveSoftware/Brave-Browser/User Data",
-        "Opera": roaming / "Opera Software/Opera Stable",
-        "Opera GX": roaming / "Opera Software/Opera GX Stable",
-        "Vivaldi": local / "Vivaldi/User Data",
-        "Chromium": local / "Chromium/User Data",
-        "Whale": local / "Naver/Naver Whale/User Data",
-    }
-    found = {}
-    for name, folder in locations.items():
-        if folder.exists():
-            if name == "Opera GX":
-                found[name] = ("browser", "opera", str(folder))
-            else:
-                found[name] = ("browser", BROWSER_MAP[name], None)
-    return found
-
-
 def ensure_writable(folder: Path):
     folder.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryFile(dir=folder):
@@ -135,15 +132,11 @@ def ensure_writable(folder: Path):
 
 
 class PrivateLogger:
-    """yt-dlp messages remain in memory for auth classification; never persist URLs."""
-    def __init__(self):
-        self.errors = []
+    """Discard downloader messages that may contain signed URLs."""
     def debug(self, msg):
         pass
-    def warning(self, msg):
-        self.errors.append(str(msg).lower()[:1500])
-    def error(self, msg):
-        self.errors.append(str(msg).lower()[:1500])
+
+    warning = error = debug
 
 
 class App:
@@ -151,11 +144,6 @@ class App:
         self.root = root
         self.queue = Queue()
         self.stop_event = threading.Event()
-        self.auth_event = threading.Event()
-        self.auth_response = None
-        self.auth_dialog = None
-        self.webex_login_event = threading.Event()
-        self.webex_login_approved = False
         self.running = False
         self.close_when_done = False
         self.model_instance = None
@@ -166,7 +154,6 @@ class App:
         self.cloud_provider = tk.StringVar(value=config.get("cloud_provider", "groq"))
         self.cloud_model = tk.StringVar(value=config.get("cloud_model", "whisper-large-v3-turbo"))
         self.cloud_key_id = tk.StringVar(value=config.get("cloud_key_id", ""))
-        self.auth_cached_choice = None
         self.update_asset = None
         self.update_temp = None
         self.ui_language = tk.StringVar(value=config.get("ui_language", "it"))
@@ -182,8 +169,7 @@ class App:
         self.spoken = tk.StringVar(value=config.get("spoken", "auto"))
         self.engine = tk.StringVar(value=config.get("engine", "local"))
         self.api_key = tk.StringVar(value="")  # Session-only, never stored or logged.
-        self.remember_auth = tk.BooleanVar(value=config.get("remember_auth", False))
-        self.auth_saved = config.get("auth_choice", None)
+        self.webex_browser = config.get("webex_browser", "")
         self.cpu_threads = config.get("cpu_threads", min(8, os.cpu_count() or 8))
         self.update_repo = tk.StringVar(value=OFFICIAL_REPO)
         self.status = tk.StringVar(value=I18N[self.ui_language.get()]["ready"])
@@ -200,6 +186,8 @@ class App:
         self.apply_theme()
         self.rebuild()
         self._rendered_language = self.ui_language.get()
+        if not self.webex_browser:
+            root.after(250, self.browser_setup)
         root.after(100, self.poll)
         root.after(2500, self.watch_system_theme)
         root.after(350, self.animate_status)
@@ -217,10 +205,9 @@ class App:
             "ui_language": self.ui_language.get(), "theme": self.ui_theme.get(),
             "transcripts": self.transcripts_dir.get(), "videos": self.videos_dir.get(),
             "keep_video": self.keep_video.get(), "quality": self.model.get(), "spoken": self.spoken.get(),
+            "webex_browser": self.webex_browser,
             "engine": self.engine.get(), "cloud_provider":self.cloud_provider.get(),
             "cloud_model":self.cloud_model.get(), "cloud_key_id":self.cloud_key_id.get(),
-            "remember_auth": self.remember_auth.get(),
-            "auth_choice": self.auth_saved if self.remember_auth.get() else None,
         }
         try:
             CONFIG_DIR.mkdir(parents=True, exist_ok=True)
@@ -662,9 +649,8 @@ class App:
             lambda: self.open_folder(Path(self.transcripts_dir.get())), 148).pack(side="left", padx=(0, 7))
         self.secondary_button(actions, self.t("logs"),
             lambda: self.open_folder(CONFIG_DIR), 140).pack(side="left")
-        self.secondary_button(advanced_body,
-            "Disconnetti Webex / Sign out of Webex",
-            self.clear_webex_session, 250).pack(anchor="w", padx=15, pady=(5, 9))
+        self.secondary_button(advanced_body, self.t("webex_setup"),
+            self.browser_setup, 250).pack(anchor="w", padx=15, pady=(5, 9))
         self.text(advanced_body, self.t("updates") + " · v" + VERSION, 11, True).pack(anchor="w", padx=15, pady=(12, 0))
         self.secondary_button(advanced_body, self.t("check_update"), self.check_updates, 180).pack(anchor="w", padx=15, pady=7)
         self.text(advanced_body, "Official: " + OFFICIAL_REPO, 10, muted=True).pack(anchor="w", padx=15, pady=(1, 12))
@@ -948,10 +934,8 @@ class App:
                 elif kind == "progress":
                     self.progress_value = min(100, max(0, value))
                     self.progress.set(self.progress_value / 100)
-                elif kind == "auth":
-                    self.auth_popup()
-                elif kind == "webex_login":
-                    self.webex_login_popup()
+                elif kind == "webex_error":
+                    messagebox.showwarning(APP, self.t(value))
                 elif kind == "update_found":
                     self.confirm_update(value)
                 elif kind == "update_none":
@@ -1037,8 +1021,6 @@ class App:
         # Name resolution happens in the worker after retrieving Webex metadata.
         requested_name = clean_name(self.lecture.get()) if self.custom_name.get() else None
         self.stop_event.clear()
-        self.auth_event.clear()
-        self.auth_response = None
         self.running = True
         self.progress_value = 0
         self.progress.set(0)
@@ -1054,141 +1036,69 @@ class App:
         if not self.running:
             return
         self.stop_event.set()
-        self.auth_event.set()
-        self.webex_login_event.set()
-        if self.auth_dialog is not None and self.auth_dialog.winfo_exists():
-            self.auth_dialog.destroy()
-        self.auth_dialog = None
         self.stop_button.configure(state="disabled")
 
     def check_cancel(self):
         if self.stop_event.is_set():
             raise JobCancelled()
 
-    def auth_popup(self):
-        if self.stop_event.is_set():
-            self.auth_event.set()
-            return
-        c = self.palette()
-        dlg = ctk.CTkToplevel(self.root)
-        self.auth_dialog = dlg
-        dlg.title(self.t("auth_title"))
-        dlg.geometry("480x365")
-        dlg.minsize(410, 340)
-        dlg.transient(self.root)
-        dlg.grab_set()
-        panel = ctk.CTkFrame(dlg, fg_color="transparent")
-        panel.pack(fill="both", expand=True, padx=20, pady=18)
-        self.text(panel, self.t("auth_title"), 17, True).pack(anchor="w", pady=(0,8))
-        explanation = (
-            "Apri il player con LectureScribe oppure usa una sessione o un file cookie autorizzato."
-            if self.ui_language.get() == "it" else
-            "Open the player in LectureScribe or use an authorized browser session or cookie file."
-        )
-        self.text(panel, explanation, 11, muted=True, wraplength=415,
-                  justify="left").pack(anchor="w", pady=(0,13))
-        installed = browser_candidates()
-        dedicated = "LectureScribe Webex"
-        choices = [dedicated, *installed, self.t("samsung"), self.t("cookies")]
-        choice = ctk.StringVar(value=choices[0])
-        ctk.CTkOptionMenu(panel, variable=choice, values=choices, height=36,
-            fg_color=c["inset"], button_color=c["inset"],
-            dropdown_fg_color=c["panel"], text_color=c["fg"]).pack(fill="x")
-        self.text(panel, self.t("browser_tip"), 10, muted=True,
-                  wraplength=415, justify="left").pack(anchor="w", pady=(10,11))
-        def resolve(result):
-            self.auth_response = result
-            self.auth_event.set()
-            if dlg.winfo_exists():
-                dlg.destroy()
-            self.auth_dialog = None
-        def confirm():
-            key = choice.get()
-            if key == dedicated:
-                resolve(("persistent",))
-            elif key in installed:
-                resolve(installed[key])
-            else:
-                path = filedialog.askopenfilename(parent=dlg,
-                    filetypes=[("Netscape cookie file", "*.txt"), ("All files", "*.*")])
-                if path:
-                    resolve(("file", path))
-        ctk.CTkCheckBox(panel, text=self.t("auth_remember"), variable=self.remember_auth,
-            font=("Segoe UI", 10), checkbox_width=17, checkbox_height=17).pack(anchor="w", pady=(0,10))
-        row = ctk.CTkFrame(panel, fg_color="transparent")
-        row.pack(fill="x")
-        ctk.CTkButton(row, text=self.t("auth_continue"), command=confirm,
-                      fg_color=c["accent"], text_color=c["accent_text"]).pack(side="left", fill="x", expand=True)
-        self.secondary_button(row, self.t("cancel"), lambda: resolve(None), 110).pack(side="left", padx=(8,0))
-        dlg.protocol("WM_DELETE_WINDOW", lambda: resolve(None))
-
-    def clear_webex_session(self):
+    def browser_setup(self):
         if self.running:
-            messagebox.showwarning(APP, "Complete or cancel current job first")
             return
-        if not messagebox.askyesno(APP, "Remove saved LectureScribe Webex session?"):
-            return
-        try:
-            logout_webex_profile(WEBEX_PROFILE)
-            self.auth_cached_choice = None
-            if self.auth_saved and self.auth_saved[0] == "persistent":
-                self.auth_saved = None
-                self.save_config()
-            self.log("WEBEX_SESSION_CLEARED")
-        except OSError:
-            messagebox.showerror(APP, "Close the Webex browser window and try again")
-
-    def webex_login_popup(self):
         dlg = ctk.CTkToplevel(self.root)
-        dlg.title("LectureScribe · Webex")
-        dlg.geometry("490x250")
+        dlg.title(self.t("webex_setup"))
+        dlg.geometry("500x255")
         dlg.transient(self.root)
         dlg.grab_set()
-        self.auth_dialog = dlg
         pane = ctk.CTkFrame(dlg)
         pane.pack(fill="both", expand=True, padx=16, pady=16)
-        self.text(pane, "Apri la registrazione nel browser di LectureScribe." if self.ui_language.get() == "it"
-                  else "Open the recording in the LectureScribe browser.", 13, True).pack(pady=10)
-        self.text(pane, ("Completa l'accesso, avvia il video e premi Continua. La sessione sarà riutilizzata."
-                  if self.ui_language.get() == "it" else
-                  "Sign in, start playback and click Continue. The session will be reused."),
-                  11, wraplength=410, justify="left").pack(padx=10, pady=8)
-        def finish(approved):
-            self.webex_login_approved = approved
-            self.webex_login_event.set()
-            if dlg.winfo_exists():
-                dlg.destroy()
-            self.auth_dialog = None
-        self.secondary_button(pane, "Continua / Continue", lambda: finish(True), 180).pack(pady=8)
-        self.secondary_button(pane, "Annulla / Cancel", lambda: finish(False), 180).pack()
-        dlg.protocol("WM_DELETE_WINDOW", lambda: finish(False))
+        self.text(pane, self.t("webex_setup_help"), 12, wraplength=425,
+                  justify="left").pack(padx=14, pady=(14, 10))
+        choices = ["Samsung Internet", "Chrome", "Edge", "Brave", "Firefox", self.t("webex_other")]
+        selected = ctk.StringVar(value=self.webex_browser or choices[0])
+        ctk.CTkOptionMenu(pane, variable=selected, values=choices).pack(pady=4)
+        instruction = self.text(pane, "", 11, wraplength=420, justify="left")
+        instruction.pack(padx=12, pady=8)
 
-    def inspect_webex_session(self, url, profile, interactive=False):
-        def on_ready():
-            self.webex_login_event.clear()
-            self.webex_login_approved = False
-            self.send("webex_login")
-            while not self.webex_login_event.wait(.2):
-                self.check_cancel()
-            self.check_cancel()
-            if not self.webex_login_approved:
-                raise JobCancelled()
-        return inspect_webex(
-            profile, url, interactive=interactive,
-            on_browser_ready=on_ready if interactive else None,
-            check_cancel=self.check_cancel,
-        )
+        def update(*_):
+            key = "webex_firefox_help" if selected.get() == "Firefox" else "webex_chromium_help"
+            instruction.configure(text=self.t(key))
+
+        def save():
+            self.webex_browser = selected.get()
+            self.save_config()
+            dlg.destroy()
+
+        selected.trace_add("write", update)
+        update()
+        self.secondary_button(pane, self.t("webex_save"), save, 160).pack(pady=4)
 
     def download(self, url, folder):
-        logger = PrivateLogger()
         def hook(data):
             self.check_cancel()
-            if data.get("status") != "downloading":
-                return
-            total = data.get("total_bytes") or data.get("total_bytes_estimate")
-            if total:
-                self.send("progress", min(35, 35 * data.get("downloaded_bytes", 0) / total))
-        base_opts = {
+            if data.get("status") == "downloading":
+                total = data.get("total_bytes") or data.get("total_bytes_estimate")
+                if total:
+                    self.send("progress", min(35, 35 * data.get("downloaded_bytes", 0) / total))
+
+        target = url
+        if is_webex_playback(url):
+            self.send("status", self.t("webex_connect"))
+            try:
+                target = capture_playlist(
+                    url, check_cancel=self.check_cancel,
+                    on_playback=lambda: self.send("status", self.t("webex_wait")),
+                )
+            except WebexBrowserError as exc:
+                self.check_cancel()
+                self.log("WEBEX_CAPTURE_FAILED")
+                raise RuntimeError(str(exc)) from None
+            self.log("WEBEX_HLS_FOUND")
+
+        self.log("DOWNLOAD_STARTED")
+        self.send("status", self.t("downloading"))
+        opts = {
+            "outtmpl": str(folder / "recording.%(ext)s"),
             "noplaylist": True,
             "ffmpeg_location": imageio_ffmpeg.get_ffmpeg_exe(),
             "socket_timeout": 15,
@@ -1197,114 +1107,25 @@ class App:
             "fragment_retries": 3,
             "skip_unavailable_fragments": False,
             "progress_hooks": [hook],
-            "logger": logger,
+            "logger": PrivateLogger(),
             "quiet": True,
             "no_warnings": True,
             "noprogress": True,
         }
-        attempt_number = 0
-        playback = is_webex_playback(url)
-        direct_hls = urlsplit(url).path.lower().endswith(".m3u8")
-
-        def attempt(target=url, extra=None, browser_cookies=()):
-            nonlocal attempt_number
-            self.check_cancel()
-            logger.errors.clear()
-            attempt_number += 1
-            destination = folder / str(attempt_number)
-            destination.mkdir()
-            opts = {**base_opts, **(extra or {}), "outtmpl": str(destination / "recording.%(ext)s")}
+        try:
             with yt_dlp.YoutubeDL(opts) as dl:
-                if browser_cookies:
-                    add_to_ytdlp_cookiejar(dl, browser_cookies)
-                result = dl.extract_info(target, download=True)
+                metadata = dl.extract_info(target, download=True) or {}
+        except DownloadError:
             self.check_cancel()
-            candidates = [p for p in destination.iterdir() if p.is_file() and p.suffix.lower() in EXTS]
-            if not candidates:
-                raise DownloadError("no_media")
-            metadata = result if isinstance(result, dict) else {}
-            self.log("DOWNLOAD_FINISHED")
-            self.send("progress", 35)
-            return max(candidates, key=lambda p: p.stat().st_size), (metadata.get("title") or metadata.get("fulltitle"))
-
-        def browser_attempt(profile, *, interactive=False):
-            playlist, cookies = self.inspect_webex_session(url, profile, interactive)
-            if playlist:
-                self.log("WEBEX_HLS_FOUND")
-                try:
-                    return attempt(playlist)
-                except DownloadError:
-                    self.log("WEBEX_HLS_DOWNLOAD_FAILED")
-            if cookies:
-                return attempt(browser_cookies=cookies)
-            raise DownloadError("no_media")
-
-        def authorized_attempt(selection, *, interactive=False):
-            method, *details = selection
-            if method == "persistent":
-                return browser_attempt(WEBEX_PROFILE, interactive=interactive)
-            identity, *profile = details
-            if method == "file":
-                # yt-dlp can update its cookie file on close. Use an in-memory copy.
-                contents = Path(identity).read_text(encoding="utf-8-sig")
-                return attempt(extra={"cookiefile": StringIO(contents)})
-            browser_options = (identity, profile[0]) if profile and profile[0] else (identity,)
-            return attempt(extra={"cookiesfrombrowser": browser_options})
-
-        self.log("DOWNLOAD_STARTED")
-        self.send("status", self.t("downloading"))
-        if playback and not WEBEX_PROFILE.exists():
-            try:
-                return browser_attempt(None)
-            except (DownloadError, WebexBrowserError):
-                self.log("WEBEX_ANONYMOUS_HLS_UNAVAILABLE")
-        elif playback:
-            try:
-                return browser_attempt(WEBEX_PROFILE)
-            except (DownloadError, WebexBrowserError):
-                self.log("WEBEX_SAVED_SESSION_UNAVAILABLE")
-        try:
-            return attempt()
-        except DownloadError as exc:
-            self.check_cancel()
-            error = (str(exc) + " " + " ".join(logger.errors)).lower()
-            if direct_hls or (not playback and not any(token in error for token in AUTH_WORDS)):
-                self.log("DOWNLOAD_FAILED")
-                raise RuntimeError("download_failed") from None
-
-        cached = self.auth_cached_choice or (self.auth_saved if self.remember_auth.get() else None)
-        if cached and not (playback and cached[0] == "persistent"):
-            try:
-                return authorized_attempt(cached)
-            except JobCancelled:
-                raise
-            except Exception:
-                self.log("CACHED_AUTH_FAILED")
-                self.auth_cached_choice = None
-                self.auth_saved = None
-
-        self.auth_response = None
-        self.auth_event.clear()
-        self.send("auth")
-        while not self.auth_event.wait(.2):
-            self.check_cancel()
+            self.log("DOWNLOAD_FAILED")
+            raise RuntimeError("download_failed") from None
         self.check_cancel()
-        if self.auth_response is None:
-            raise JobCancelled()
-        selection = self.auth_response
-        try:
-            downloaded = authorized_attempt(selection, interactive=selection[0] == "persistent")
-        except JobCancelled:
-            raise
-        except Exception:
-            self.check_cancel()
-            self.log("AUTH_RETRY_FAILED")
-            raise RuntimeError("auth_failed") from None
-        self.auth_cached_choice = selection
-        if self.remember_auth.get():
-            self.auth_saved = list(selection)
-            self.save_config()
-        return downloaded
+        candidates = [p for p in folder.iterdir() if p.is_file() and p.suffix.lower() in EXTS]
+        if not candidates:
+            raise RuntimeError("no_media")
+        self.log("DOWNLOAD_FINISHED")
+        self.send("progress", 35)
+        return max(candidates, key=lambda p: p.stat().st_size), (metadata.get("title") or metadata.get("fulltitle"))
 
     def transcribe(self, job, media, network_media):
         self.check_cancel()
@@ -1383,7 +1204,6 @@ class App:
 
     def worker_batch(self, job, sources):
         failures = 0
-        self.auth_cached_choice = None
         for index, source in enumerate(sources, start=1):
             if self.stop_event.is_set():
                 self.send("cancelled")
@@ -1400,9 +1220,11 @@ class App:
             except JobCancelled:
                 self.send("cancelled")
                 return
-            except Exception:
+            except Exception as exc:
                 failures += 1
                 self.log("BATCH_ITEM_FAILED")
+                if isinstance(exc, RuntimeError) and str(exc) in WEBEX_ERRORS:
+                    self.send("webex_error", str(exc))
             self.send("status", f"{index}/{len(sources)}")
         self.send("done_batch", (len(sources), failures, str(job['transcripts'])))
 

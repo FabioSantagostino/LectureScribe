@@ -2,16 +2,16 @@
 
 LectureScribe accepts Webex playback links, HLS URLs and local media in the same field and queue. Version 1.5.0 is a release candidate.
 
-## Webex recording downloads
+## Webex nel browser predefinito (Windows)
 
-1. Paste the original Webex `/playback` link. LectureScribe opens the authorized Webex player in a dedicated browser and watches for a successful `.m3u8` response.
-2. If the recording needs sign-in or playback needs a click, choose **LectureScribe Webex** when prompted. Complete any university SSO/MFA or recording password prompt in the browser window. Start playback, then click **Continue** in LectureScribe.
-3. LectureScribe sends the observed playlist URL, including its original query string, to yt-dlp. If discovery fails or the playlist can't be downloaded, it can retry the original link through yt-dlp, using the authorized session or the browser/cookie-file method selected in the authentication dialog.
-4. If you already have an authorized HLS URL, paste it directly. An expired link can be replaced with a fresh one or with the original Webex playback link.
+1. Estrai tutto lo ZIP in una cartella da conservare. Avvia `LectureScribe.exe` e indica quale browser è impostato come predefinito in Windows. LectureScribe salva la scelta e mostra le istruzioni per la variante corretta. Puoi cambiarla da **Avanzate → Browser per Webex**.
+2. In **Samsung Internet per Windows**, apri `internet://extensions`. In Chrome, Edge o Brave apri rispettivamente `chrome://extensions`, `edge://extensions` o `brave://extensions`. Attiva **Modalità sviluppatore** e usa **Carica estensione non pacchettizzata** per selezionare la cartella `browser-extension` accanto all'EXE. Questa installazione si fa una volta per profilo del browser.
+3. In **Firefox**, apri `about:debugging#/runtime/this-firefox`, scegli **Carica componente aggiuntivo temporaneo** e seleziona `browser-extension/firefox/manifest.json`. L'estensione di questa candidata va ricaricata dopo il riavvio di Firefox. Nel repository sorgente, prepara una copia di `browser-extension` con `manifest.firefox.json` rinominato in `manifest.json`.
+4. Incolla il link originale Webex `/playback` in LectureScribe e avvia la trascrizione. Windows apre una nuova scheda nel browser predefinito. Se il player non parte da solo, premi **Play** nella scheda Webex. Quando il player riceve la playlist, LectureScribe inizia il download. Puoi anche incollare un URL HLS valido direttamente, senza estensione.
 
-Webex discovery uses installed Google Chrome or Playwright Chromium. For source installations without Chrome, install Chromium with `python -m playwright install chromium` in the application environment. The Windows candidate includes the Playwright driver and uses installed Chrome or an existing compatible Playwright Chromium installation.
+L'estensione osserva solo le risposte Webex della scheda aperta per la registrazione e invia l'URL della playlist una sola volta a LectureScribe tramite un collegamento su `127.0.0.1`. Il browser continua a gestire la sessione Webex. L'app non legge cookie o credenziali. Gli URL HLS possono scadere. Se l'estensione non viene rilevata, verifica che sia attiva nel profilo usato dal browser predefinito e riprova.
 
-The dedicated browser profile lives under `%APPDATA%\LectureScribe\webex_browser_profile`. Use **Advanced → Disconnect Webex** to clear the session when no job is running. The HLS handoff carries the observed URL in memory. The original-link fallback can use Webex cookies in memory. Keep recording URLs, tokenized playlists, browser profiles and cookie exports private.
+Samsung documenta il caricamento delle estensioni in modalità sviluppatore su Windows. Il flusso resta da verificare sulla registrazione PoliMi e sulla versione di Samsung Internet installata. [Documentazione Samsung sulle estensioni](https://developer.samsung.com/browser/policy/extension-unpublished-availability.html)
 
 ## Experimental automatic Intel acceleration
 
@@ -60,10 +60,6 @@ Choose **Cloud**, select Groq, OpenAI or Gemini, and confirm each batch before u
 
 Local transcription runs on the device. The recording provider and model host are contacted when downloading media or models.
 
-## Samsung Internet on Windows
-
-`yt-dlp` cannot officially import Samsung Internet's protected cookie store. In the authentication dialog choose Samsung Browser / Netscape file once, then check **Remember authentication method**. Keep the exported file in a private location outside your repository. Subsequent recordings reuse that file *while the Webex login stays valid*. When cookies expire, manually replace the Netscape export. Do not email, commit, sync publicly or share it. Native Samsung session refresh remains future work, pending a secure browser integration.
-
 ## Updating inside the app
 
 Open **Advanced → Updates → Check for updates**. The packaged EXE knows the repository it was built from; source users can enter `owner/repo`. The app asks for consent, fetches the public ZIP asset, requires GitHub's SHA-256 asset digest, stages a new EXE and restarts. This is an in-place update, not a privileged installer. The directory must be writable and updates should be tested on an isolated Windows copy first. Use a GitHub Release with an attached `LectureScribe-Windows-x64.zip` asset.
@@ -77,7 +73,7 @@ Open **Advanced → Updates → Check for updates**. The packaged EXE knows the 
 
 ## Candidate verification
 
-Run `python -m unittest discover -s tests -v` locally. Before tagging, verify the EXE on Windows, a private Webex recording through SSO/MFA and transcription, cloud jobs using real provider credentials, and the optional OpenVINO runtime using prepared models and Intel hardware.
+Run `python -m unittest discover -s tests -v` locally. Before tagging, verify the EXE on Windows, a private Webex recording through the default-browser extension and transcription, cloud jobs using real provider credentials, and the optional OpenVINO runtime using prepared models and Intel hardware.
 
 ## License
 

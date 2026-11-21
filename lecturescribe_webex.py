@@ -1,142 +1,130 @@
-"""Observe the Webex player in an isolated Playwright browser.
-
-No password interception; only cookies scoped to Webex domains are copied into
-an in-memory cookie jar for the legacy yt-dlp fallback.
-"""
+"""Receive one authorized Webex playlist from the user's browser extension."""
 from __future__ import annotations
 
-from http.cookiejar import Cookie
-from pathlib import Path
+from html import escape
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from secrets import token_urlsafe
+from threading import Event, Lock, Thread
 from time import monotonic
 from urllib.parse import urlsplit
+from webbrowser import open as open_browser
 
 
 class WebexBrowserError(RuntimeError):
     pass
 
 
-WEBEX_HOST_SUFFIXES = (".webex.com", ".webex.com.cn")
-
-
-def _allowed_domain(domain: str) -> bool:
-    domain = domain.lower().lstrip('.')
-    return any(domain == suffix[1:] or domain.endswith(suffix)
-               for suffix in WEBEX_HOST_SUFFIXES)
-
-
-def _webex_url(url: str):
+def _webex_path(url: str) -> str:
     try:
         parsed = urlsplit(url)
-        if (parsed.scheme == 'https' and _allowed_domain(parsed.hostname or '')
-                and parsed.username is None and parsed.port in (None, 443)):
-            return parsed
+        host = parsed.hostname or ""
+        if (parsed.scheme == "https" and parsed.username is None
+                and parsed.port in (None, 443)
+                and host.endswith((".webex.com", ".webex.com.cn"))):
+            return parsed.path.lower()
     except ValueError:
         pass
-    return None
+    return ""
 
 
 def is_webex_playback(url: str) -> bool:
-    parsed = _webex_url(url)
-    if parsed is None:
-        return False
-    path = parsed.path.lower()
-    return 'playback' in path.split('/') and not path.endswith('.m3u8')
+    path = _webex_path(url)
+    return "playback" in path.split("/") and not path.endswith(".m3u8")
 
 
-def _playlist_url(response):
-    parsed = _webex_url(response.url)
-    if not parsed or not parsed.path.lower().endswith('.m3u8') or response.status != 200:
-        return None
-    content_type = response.headers.get('content-type', '').partition(';')[0].strip().lower()
-    if content_type in ('text/html', 'application/xhtml+xml', 'application/json'):
-        return None
-    return response.url
+def capture_playlist(url, *, check_cancel, on_playback=lambda: None, timeout=180):
+    if not is_webex_playback(url):
+        raise WebexBrowserError("webex_capture_failed")
+    token = token_urlsafe(32)
+    route = f"/lecturescribe/{token}"
+    ready = Event()
+    complete = Event()
+    result_lock = Lock()
+    playlist = None
 
+    class Handler(BaseHTTPRequestHandler):
+        def setup(self):
+            super().setup()
+            self.connection.settimeout(2)
 
-def add_to_ytdlp_cookiejar(ydl, cookies):
-    """Do not export session credentials to a plaintext Netscape file."""
-    count = 0
-    for item in cookies:
-        domain = str(item.get('domain') or '')
-        name = item.get('name')
-        if not name or not _allowed_domain(domain):
-            continue
-        host_only = not domain.startswith('.')
-        path = str(item.get('path') or '/')
-        expires = item.get('expires', -1)
-        cookie = Cookie(
-            version=0, name=str(name), value=str(item.get('value', '')),
-            port=None, port_specified=False,
-            domain=domain, domain_specified=not host_only,
-            domain_initial_dot=not host_only,
-            path=path, path_specified=True,
-            secure=bool(item.get('secure', False)),
-            expires=int(expires) if expires is not None and expires > 0 else None,
-            discard=expires is None or expires <= 0,
-            comment=None, comment_url=None, rest={'HttpOnly': item.get('httpOnly', False)},
-            rfc2109=False,
-        )
-        ydl.cookiejar.set_cookie(cookie)
-        count += 1
-    return count
+        def log_message(self, *args):
+            pass
 
+        def reply(self, status, body=b""):
+            self.send_response(status)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("Referrer-Policy", "no-referrer")
+            self.send_header("Content-Security-Policy", "default-src 'none'; frame-ancestors 'none'")
+            self.end_headers()
+            if body:
+                self.wfile.write(body)
 
-def inspect_webex(profile_dir: Path | None, login_url: str, *, interactive=False,
-                  on_browser_ready=None, check_cancel=lambda: None):
-    """Return the observed HLS URL and cookies for the original-link fallback."""
-    if not _webex_url(login_url):
-        raise WebexBrowserError('Expected HTTPS Webex recording URL')
-    try:
-        from playwright.sync_api import Error, sync_playwright
-    except ImportError:
-        raise WebexBrowserError('Playwright is missing') from None
+        def valid_host(self):
+            return self.headers.get("Host") == f"127.0.0.1:{self.server.server_port}"
+
+        def do_GET(self):
+            if not self.valid_host() or self.path != route:
+                self.reply(404)
+                return
+            self.reply(200, (
+                "<!doctype html><meta charset=utf-8><title>LectureScribe</title>"
+                "<h1>LectureScribe</h1><p>Install or enable the LectureScribe browser extension "
+                "and retry if Webex does not open automatically.</p>"
+                f'<a id="playback" href="{escape(url, quote=True)}">Open Webex</a>'
+            ).encode("utf-8"))
+
+        def do_POST(self):
+            nonlocal playlist
+            if not self.valid_host():
+                self.reply(404)
+                return
+            if self.path == route + "/ready":
+                ready.set()
+                self.reply(204)
+                return
+            if self.path != route + "/playlist" or not ready.is_set():
+                self.reply(404)
+                return
+            try:
+                length = int(self.headers.get("Content-Length", "0"))
+                candidate = self.rfile.read(length).decode("utf-8") if 0 < length <= 16384 else ""
+            except (OSError, ValueError):
+                self.reply(400)
+                return
+            if not _webex_path(candidate).endswith(".m3u8") or any(c.isspace() for c in candidate):
+                self.reply(400)
+                return
+            with result_lock:
+                if not complete.is_set():
+                    playlist = candidate
+                    complete.set()
+            self.reply(204)
 
     check_cancel()
     try:
-        with sync_playwright() as p:
-            # The anonymous probe uses a temporary profile. Login takes place
-            # only in the app-owned profile, never in a personal browser profile.
-            channel = {} if Path(p.chromium.executable_path).is_file() else {'channel': 'chrome'}
-            context = p.chromium.launch_persistent_context(
-                user_data_dir=str(profile_dir) if profile_dir else '', **channel,
-                headless=not interactive, accept_downloads=False, chromium_sandbox=True,
-            )
+        with ThreadingHTTPServer(("127.0.0.1", 0), Handler) as server:
+            thread = Thread(target=server.serve_forever, kwargs={"poll_interval": .2}, daemon=True)
+            thread.start()
             try:
-                playlists = []
-
-                def observe(response):
-                    url = _playlist_url(response)
-                    if url and url not in playlists:
-                        playlists.append(url)
-
-                if interactive or is_webex_playback(login_url):
-                    context.on('response', observe)
-                    page = context.pages[0] if context.pages else context.new_page()
-                    try:
-                        page.goto(login_url, wait_until='commit', timeout=10000)
-                    except Error:
-                        # A slow load or SSO redirect can still complete.
-                        pass
+                if not open_browser(f"http://127.0.0.1:{server.server_port}{route}", new=2):
+                    raise WebexBrowserError("webex_browser_failed")
+                deadline = monotonic() + 20
+                while not ready.wait(.2):
                     check_cancel()
-                    if interactive and on_browser_ready:
-                        on_browser_ready()
-                    if is_webex_playback(login_url):
-                        deadline = monotonic() + 8
-                        while not playlists and monotonic() < deadline:
-                            check_cancel()
-                            # Pump Playwright events while the player loads.
-                            page.wait_for_timeout(200)
+                    if monotonic() >= deadline:
+                        raise WebexBrowserError("webex_extension_missing")
+                on_playback()
+                deadline = monotonic() + timeout
+                while not complete.wait(.2):
+                    check_cancel()
+                    if monotonic() >= deadline:
+                        raise WebexBrowserError("webex_capture_failed")
                 check_cancel()
-                cookies = context.cookies([login_url]) if profile_dir else []
-                return playlists[0] if playlists else None, cookies
+                return playlist
             finally:
-                context.close()
-    except Error:
-        raise WebexBrowserError('Could not open the Webex browser session') from None
-
-
-def logout(profile_dir: Path):
-    """Remove dedicated profile; caller must confirm and close any active browser."""
-    import shutil
-    if profile_dir.exists():
-        shutil.rmtree(profile_dir)
+                server.shutdown()
+                thread.join()
+    except OSError:
+        raise WebexBrowserError("webex_browser_failed") from None
