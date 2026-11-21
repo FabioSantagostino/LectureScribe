@@ -196,10 +196,8 @@ def transcribe_on_device(media, language, pipe, device, cancelled, on_status=lam
         if cancelled():
             raise InterruptedError()
         overlap_samples = 1 * 16000
-        # Leave room for language detection and timestamp tokens on the NPU's
-        # bounded Whisper decoder cache. Count overlap in the input limit.
-        window_samples = (12 if device == 'NPU' else 30) * 16000
-        chunk_samples = window_samples - overlap_samples
+        # Include the overlap in Whisper's 30-second input window.
+        chunk_samples = 30 * 16000 - overlap_samples
         output = []
         on_status(device)
         with wave.open(str(full_path), 'rb') as audio:
@@ -247,7 +245,7 @@ def prepare_parallel(media, model, language, models_root, cancelled, on_status):
             if cancelled():
                 raise InterruptedError()
             path = Path(temp) / f'{index}.wav'
-            convert_audio(source, path, seconds=12)
+            convert_audio(source, path, seconds=30)
             samples.append(read_audio(path))
 
     def run(pipe, sample):
