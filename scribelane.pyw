@@ -1500,11 +1500,17 @@ class App:
             with tempfile.TemporaryDirectory(prefix="scribelane_") as temp:
                 media, title = self.download(source, Path(temp))
                 self.resolve_name(job, media, title)
-                self.transcribe_engine(job, media, True)
                 if job["keep"]:
-                    self.check_cancel()
                     self.send("status", self.t("video_copy"))
-                    shutil.copy2(media, job["videos"] / (job["name"] + media.suffix))
+                    destination = job["videos"] / (job["name"] + media.suffix)
+                    with tempfile.TemporaryDirectory(prefix=".scribelane-", dir=destination.parent) as staging:
+                        staged = Path(staging) / destination.name
+                        shutil.copy2(media, staged)
+                        staged.rename(destination)
+                    media = destination
+                    self.log("VIDEO_RETAINED")
+                self.check_cancel()
+                self.transcribe_engine(job, media, True)
         else:
             media = Path(source)
             if not media.is_file():

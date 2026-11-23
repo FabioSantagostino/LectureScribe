@@ -10,6 +10,30 @@ from test_webex import PLAYBACK, PLAYLIST, gui
 
 
 class SettingsAndQueueTests(unittest.TestCase):
+    def test_kept_download_survives_transcription_failure(self):
+        app = gui.App.__new__(gui.App)
+        app.send = Mock()
+        app.log = Mock()
+        app.t = lambda key: key
+        app.stop_event = Event()
+        app.transcribe_engine = Mock(side_effect=RuntimeError("transcription failed"))
+
+        def download(url, temp):
+            media = temp / "recording.mp4"
+            media.write_bytes(b"video")
+            return media, "Lecture"
+
+        app.download = download
+        with tempfile.TemporaryDirectory() as temp:
+            folder = Path(temp)
+            job = {"source": PLAYBACK, "name": None, "transcripts": folder,
+                   "videos": folder, "keep": True}
+            with self.assertRaisesRegex(RuntimeError, "transcription failed"):
+                app.process_one(job)
+            retained = folder / "Lecture.mp4"
+            self.assertEqual(retained.read_bytes(), b"video")
+            app.transcribe_engine.assert_called_once_with(job, retained, True)
+
     def test_bulk_links_keep_titles_order_and_signed_query(self):
         items = gui.parse_queue(f"{PLAYBACK}\n\nFirst lesson | {PLAYBACK}\n{PLAYLIST}\n")
         self.assertEqual(items, [
