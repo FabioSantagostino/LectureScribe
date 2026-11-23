@@ -18,6 +18,12 @@ Se provieni da una versione precedente alla 1.6.0, scarica lo ZIP completo e avv
 2. Apri **Impostazioni** per scegliere il motore, la lingua del parlato, le cartelle di destinazione e i formati da esportare. Puoi attivare TXT, Markdown e SRT in qualsiasi combinazione. Con Whisper puoi scegliere la qualità. In modalità cloud scegli il provider e il modello.
 3. Premi **Avvia trascrizione**. Il modello Whisper viene scaricato al primo utilizzo. L'opzione **Conserva il video scaricato** salva una copia del download nella cartella indicata. I file locali originali vengono conservati.
 
+### Scaricare senza trascrivere
+
+Premi **Scarica soltanto** su una registrazione Webex, un link HLS, un file locale o una coda. ScribeLane salva i risultati nella cartella video scelta in **Impostazioni**, anche quando **Conserva il video scaricato** è disattivato. Il lavoro non richiede un modello Whisper né una chiave cloud.
+
+L'app comprime sempre il risultato in MP4 con video H.264 fino a 1080p e audio AAC. I file più piccoli conservano la risoluzione di partenza. Il risparmio di spazio dipende dal contenuto e dalla compressione già presente nel file di origine.
+
 ## Trascrivere da un link Webex `/playback`
 
 Incolla il link Webex originale e premi **Avvia trascrizione**. ScribeLane prova prima a scaricarlo con yt-dlp. Se ci riesce, il lavoro continua senza aprire il browser. Questo dipende dalla registrazione e da ciò che Webex permette a yt-dlp di recuperare direttamente. Il browser predefinito entra in gioco solo se serve il secondo tentativo. Anche i link HLS diretti funzionano senza estensione.

@@ -10,6 +10,31 @@ from test_webex import PLAYBACK, PLAYLIST, gui
 
 
 class SettingsAndQueueTests(unittest.TestCase):
+    def test_download_only_compresses_without_transcribing(self):
+        app = gui.App.__new__(gui.App)
+        app.send, app.log = Mock(), Mock()
+        app.stop_event = Event()
+        app.transcribe_engine = Mock()
+        app.try_parallel_queue = Mock()
+        app.compress_recording = Mock()
+
+        def download(url, temp):
+            media = temp / "recording.webm"
+            media.write_bytes(b"video")
+            return media, "Lecture"
+
+        app.download = download
+        with tempfile.TemporaryDirectory() as temp:
+            folder = Path(temp)
+            job = {"name": None, "transcripts": folder, "videos": folder, "keep": False,
+                   "download_only": True, "engine": "local"}
+            app.worker_batch(job, [{"source": PLAYBACK}, {"source": PLAYLIST}])
+            self.assertEqual(app.compress_recording.call_count, 2)
+            self.assertEqual(app.compress_recording.call_args.args[1], folder / "Lecture.mp4")
+            app.transcribe_engine.assert_not_called()
+            app.try_parallel_queue.assert_not_called()
+            app.send.assert_called_with("done_downloads", (2, 0, str(folder)))
+
     def test_kept_download_survives_transcription_failure(self):
         app = gui.App.__new__(gui.App)
         app.send = Mock()

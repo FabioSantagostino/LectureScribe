@@ -1,17 +1,9 @@
-# ScribeLane v1.6.0
+# ScribeLane v1.6.1
 
-- **ScribeLane** è il nuovo nome del progetto. App Windows, archivio, estensione Webex, documentazione e sistema di aggiornamento adottano il nuovo nome.
-- Per passare da una versione precedente, scarica `ScribeLane-Windows-x64.zip` ed estrai tutti i file. Avvia `ScribeLane.exe` e configura il nuovo profilo. Se usi Webex o i servizi cloud, carica l’estensione inclusa o aggiungi le chiavi in Gestisci chiavi API.
+- **Scarica soltanto.** Salva un link Webex, una playlist HLS o una coda senza avviare la trascrizione. Puoi anche convertire file locali senza modificare gli originali.
+- **Compressione automatica.** Il download senza trascrizione viene esportato in MP4 con video H.264 fino a 1080p e audio AAC. ScribeLane usa la cartella video indicata in Impostazioni.
+- **Video conservati subito.** Se attivi la conservazione durante una trascrizione, il download viene salvato prima che parta il riconoscimento.
+- **Impostazioni e coda rinnovate.** Cartelle, motore, lingua e formati TXT, Markdown e SRT sono in una schermata dedicata. Puoi incollare più link insieme, uno per riga, con titoli facoltativi.
+- **Estensione Webex 1.1.0 inclusa.** Quando serve l'estensione, la pagina locale spiega come viene passato l'indirizzo della playlist e chiede conferma prima di inviarlo all'app.
 
-## Correzioni introdotte in v1.5.2
-
-- **Correzione NPU.** Con lingua esplicita, ScribeLane riprova sulla GPU se la NPU esaurisce la cache del decoder. Con lingua automatica, usa GPU o CPU. Se OpenVINO non restituisce testo, l’app riprova con Whisper su CPU.
-
-## Novità introdotte in v1.5.1
-
-- **Webex prova prima il download diretto con yt-dlp.** L’estensione interviene solo se il link `/playback` non è scaricabile direttamente. Puoi continuare a usare playlist HLS e file locali senza estensione.
-- **Impostazione del browser più chiara.** I browser Chromium compatibili senza una voce dedicata usano la categoria **Altri browser Chromium**.
-- **OpenVINO incluso nell’EXE Windows.** Per la trascrizione locale su hardware Intel compatibile, il modello Whisper INT8 della qualità selezionata viene scaricato al primo utilizzo. L’app confronta CPU, GPU e NPU disponibili e mostra il dispositivo utilizzato. Il registro diagnostico spiega il ritorno alla CPU.
-- **Code locali su GPU e NPU.** Per due o più file locali con lingua esplicita, ScribeLane può trascrivere due registrazioni in parallelo quando una prova sui campioni mostra un vantaggio. Una singola registrazione continua a usare il dispositivo selezionato automaticamente.
-
-Scarica ed estrai il pacchetto Windows completo se ti servono i file dell’estensione. Per l’installazione e i casi d’uso, consulta il README.
+Per usare la nuova estensione, scarica ed estrai tutto lo ZIP Windows. L'aggiornamento dall'app sostituisce soltanto l'eseguibile.

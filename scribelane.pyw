@@ -11,6 +11,7 @@ import re
 import sys
 import winreg
 import shutil
+import subprocess
 import tempfile
 import threading
 import tkinter as tk
@@ -166,6 +167,20 @@ I18N['en'].update({
     'bulk_help': 'One recording per line. Paste all links at once or use Name | link to assign a title. Delete a line to remove its recording.',
     'bulk_invalid': 'Check the link or file on line {line}.',
     'bulk_save': 'Save queue',
+})
+
+
+I18N["it"].update({
+    "download_only": "Scarica soltanto",
+    "compressing": "Compressione della registrazione…",
+    "compression_failed": "Impossibile comprimere la registrazione. Controlla il log diagnostico.",
+    "downloads_finished": "Download terminati",
+})
+I18N["en"].update({
+    "download_only": "Download only",
+    "compressing": "Compressing the recording…",
+    "compression_failed": "Could not compress the recording. Check the diagnostic log.",
+    "downloads_finished": "Downloads finished",
 })
 
 
@@ -781,6 +796,9 @@ class App:
             fg_color=c["accent"], hover_color=c["accent"], text_color=c["accent_text"],
             font=("Segoe UI", 12, "bold"))
         self.start_button.pack(side="left", fill="x", expand=True)
+        self.download_button = self.secondary_button(
+            buttons, self.t("download_only"), lambda: self.start(download_only=True), 145)
+        self.download_button.pack(side="left", padx=(8, 0))
         self.stop_button = self.secondary_button(buttons, "■  " + self.t("stop"), self.cancel, 105)
         self.stop_button.pack(side="left", padx=(8,0))
         self.progress = ctk.CTkProgressBar(run_card, height=6, corner_radius=6,
@@ -1045,6 +1063,7 @@ class App:
     def update_buttons(self):
         if hasattr(self, "start_button"):
             self.start_button.configure(state="disabled" if self.running else "normal")
+            self.download_button.configure(state="disabled" if self.running else "normal")
             self.stop_button.configure(state="normal" if self.running else "disabled")
 
     def send(self, kind, value=None):
@@ -1086,12 +1105,16 @@ class App:
                             self.root.destroy()
                         except Exception:
                             messagebox.showerror(APP, self.t("update_error"))
-                elif kind == "done_batch":
+                elif kind in ("done_batch", "done_downloads"):
                     self.running = False
                     self.update_buttons()
                     total, failed, location = value
-                    self.status.set(self.t("batch_finished"))
-                    messagebox.showinfo(APP, f"{self.t('batch_finished')}: {total-failed}/{total}\n{location}" + ("\n" + self.t("batch_failed") if failed else ""))
+                    heading = self.t("downloads_finished" if kind == "done_downloads" else "batch_finished")
+                    self.status.set(heading)
+                    if not failed:
+                        self.progress_value = 100
+                        self.progress.set(1)
+                    messagebox.showinfo(APP, f"{heading}: {total-failed}/{total}\n{location}" + ("\n" + self.t("batch_failed") if failed else ""))
                     if self.close_when_done:
                         self.root.destroy()
                         return
@@ -1116,7 +1139,7 @@ class App:
             pass
         self.root.after(100, self.poll)
 
-    def start(self):
+    def start(self, *, download_only=False):
         if self.running:
             return
         source = self.source.get().strip().strip('"')
@@ -1128,7 +1151,7 @@ class App:
         if any(not x.startswith(("http://", "https://")) and not Path(x).is_file() for x in (item["source"] for item in sources)):
             messagebox.showerror(APP, self.t("notfound"))
             return
-        if self.engine.get() == "cloud":
+        if not download_only and self.engine.get() == "cloud":
             chosen = next((entry for entry in self.vault.items
                 if entry.get("id") == self.cloud_key_id.get()
                 and entry.get("enabled")
@@ -1145,8 +1168,9 @@ class App:
         transcript_dir = Path(self.transcripts_dir.get()).expanduser()
         video_dir = Path(self.videos_dir.get()).expanduser()
         try:
-            ensure_writable(transcript_dir)
-            if self.keep_video.get():
+            if not download_only:
+                ensure_writable(transcript_dir)
+            if download_only or self.keep_video.get():
                 ensure_writable(video_dir)
         except OSError:
             messagebox.showerror(APP, self.t("permission"))
@@ -1162,6 +1186,7 @@ class App:
         self.update_buttons()
         job = {"source": source, "name": requested_name, "model": model, "spoken": self.spoken.get(), "keep": self.keep_video.get(), "transcripts": transcript_dir, "videos": video_dir, "engine": self.engine.get(), "cloud_provider":self.cloud_provider.get(),"cloud_model":self.cloud_model.get(),
                "cloud_key_id":self.cloud_key_id.get(),
+               "download_only": download_only,
                "formats": tuple(fmt for fmt, selected in self.formats.items() if selected.get())}
         self.pending_sources.clear()
         self.refresh_queue()
@@ -1400,7 +1425,7 @@ class App:
 
         failures = 0
         try:
-            if job["engine"] == "local" and len(jobs) >= 2:
+            if not job.get("download_only") and job["engine"] == "local" and len(jobs) >= 2:
                 jobs, failures = self.try_parallel_queue(jobs)
             completed = len(sources) - len(jobs)
             for current in jobs:
@@ -1413,14 +1438,17 @@ class App:
                 except Exception as exc:
                     failures += 1
                     self.log("BATCH_ITEM_FAILED")
-                    if isinstance(exc, RuntimeError) and str(exc) in WEBEX_ERRORS:
+                    if isinstance(exc, RuntimeError) and str(exc) in (WEBEX_ERRORS | {"compression_failed"}):
                         self.send("webex_error", str(exc))
                 completed += 1
                 self.send("status", f"{completed}/{len(sources)}")
         except (JobCancelled, InterruptedError):
             self.send("cancelled")
             return
-        self.send("done_batch", (len(sources), failures, str(job['transcripts'])))
+        if job.get("download_only"):
+            self.send("done_downloads", (len(sources), failures, str(job["videos"])))
+        else:
+            self.send("done_batch", (len(sources), failures, str(job["transcripts"])))
 
     def try_parallel_queue(self, jobs):
         media = [Path(job["source"]) for job in jobs]
@@ -1500,6 +1528,9 @@ class App:
             with tempfile.TemporaryDirectory(prefix="scribelane_") as temp:
                 media, title = self.download(source, Path(temp))
                 self.resolve_name(job, media, title)
+                if job.get("download_only"):
+                    self.compress_recording(media, job["videos"] / (job["name"] + ".mp4"))
+                    return
                 if job["keep"]:
                     self.send("status", self.t("video_copy"))
                     destination = job["videos"] / (job["name"] + media.suffix)
@@ -1516,7 +1547,39 @@ class App:
             if not media.is_file():
                 raise RuntimeError("notfound")
             self.resolve_name(job, media)
-            self.transcribe_engine(job, media, False)
+            if job.get("download_only"):
+                self.compress_recording(media, job["videos"] / (job["name"] + ".mp4"))
+            else:
+                self.transcribe_engine(job, media, False)
+
+    def compress_recording(self, media, destination):
+        self.check_cancel()
+        self.send("status", self.t("compressing"))
+        with tempfile.TemporaryDirectory(prefix=".scribelane-", dir=destination.parent) as staging:
+            staged = Path(staging) / destination.name
+            command = [
+                imageio_ffmpeg.get_ffmpeg_exe(), "-nostdin", "-v", "error",
+                "-i", str(media), "-map", "0:V:0?", "-map", "0:a:0?",
+                "-vf", "scale=w='min(iw,1920)':h='min(ih,1080)':force_original_aspect_ratio=decrease:force_divisible_by=2,setsar=1",
+                "-c:v", "libx264", "-preset", "medium", "-crf", "24", "-pix_fmt", "yuv420p",
+                "-c:a", "aac", "-b:a", "128k", "-ac", "2",
+                "-movflags", "+faststart", str(staged),
+            ]
+            with subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                                  stderr=subprocess.DEVNULL, creationflags=subprocess.CREATE_NO_WINDOW) as encoder:
+                while encoder.poll() is None:
+                    if self.stop_event.wait(.2):
+                        encoder.kill()
+                        encoder.wait()
+                        raise JobCancelled()
+                if encoder.returncode != 0 or not staged.is_file() or not staged.stat().st_size:
+                    self.log("COMPRESSION_FAILED")
+                    raise RuntimeError("compression_failed")
+            self.check_cancel()
+            staged.rename(destination)
+        self.log("COMPRESSED_RECORDING_SAVED")
+        self.send("progress", 100)
+
 
     def transcribe_engine(self, job, media, network_media):
         if job["engine"] != "cloud":
