@@ -24,6 +24,8 @@ Premi **Scarica soltanto** su una registrazione Webex, un link HLS, un file loca
 
 L'app comprime sempre il risultato in MP4 con video H.264 fino a 1080p e audio AAC. I file più piccoli conservano la risoluzione di partenza. Il risparmio di spazio dipende dal contenuto e dalla compressione già presente nel file di origine.
 
+Per rispettare un limite di caricamento, vai in **Impostazioni → File e cartelle**, attiva **Dividi i file con «Scarica soltanto»** e inserisci il limite per parte in MB. Il valore iniziale è 500 MB. Se l’MP4 compresso rientra nel limite, resta un unico file. Altrimenti ScribeLane salva MP4 numerati in una sottocartella `Nome registrazione - parts` della cartella Video. L’app verifica la dimensione effettiva di tutte le parti. Se un limite troppo basso impedisce di completare la divisione, chiede di aumentarlo.
+
 ## Trascrivere da un link Webex `/playback`
 
 Incolla il link Webex originale e premi **Avvia trascrizione**. ScribeLane prova prima a scaricarlo con yt-dlp. Se ci riesce, il lavoro continua senza aprire il browser. Questo dipende dalla registrazione e da ciò che Webex permette a yt-dlp di recuperare direttamente. Il browser predefinito entra in gioco solo se serve il secondo tentativo. Anche i link HLS diretti funzionano senza estensione.

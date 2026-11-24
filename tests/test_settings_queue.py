@@ -30,7 +30,7 @@ class SettingsAndQueueTests(unittest.TestCase):
                    "download_only": True, "engine": "local"}
             app.worker_batch(job, [{"source": PLAYBACK}, {"source": PLAYLIST}])
             self.assertEqual(app.compress_recording.call_count, 2)
-            self.assertEqual(app.compress_recording.call_args.args[1], folder / "Lecture.mp4")
+            self.assertEqual(app.compress_recording.call_args.args[1], folder / "Lecture.mp4", None)
             app.transcribe_engine.assert_not_called()
             app.try_parallel_queue.assert_not_called()
             app.send.assert_called_with("done_downloads", (2, 0, str(folder)))

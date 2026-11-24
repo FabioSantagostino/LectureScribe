@@ -171,12 +171,22 @@ I18N['en'].update({
 
 
 I18N["it"].update({
+    "split_download": "Dividi i file con «Scarica soltanto»",
+    "split_limit": "Limite per parte (MB)",
+    "split_invalid": "Inserisci un limite intero da 1 a 1000000 MB.",
+    "splitting": "Divisione in parti…",
+    "split_failed": "Impossibile creare parti entro il limite scelto. Aumenta il limite e riprova.",
     "download_only": "Scarica soltanto",
     "compressing": "Compressione della registrazione…",
     "compression_failed": "Impossibile comprimere la registrazione. Controlla il log diagnostico.",
     "downloads_finished": "Download terminati",
 })
 I18N["en"].update({
+    "split_download": "Split oversized download-only files",
+    "split_limit": "Maximum per part (MB)",
+    "split_invalid": "Enter a whole number between 1 and 1000000 MB.",
+    "splitting": "Splitting into parts…",
+    "split_failed": "Could not split the recording within the chosen limit. Increase the limit and try again.",
     "download_only": "Download only",
     "compressing": "Compressing the recording…",
     "compression_failed": "Could not compress the recording. Check the diagnostic log.",
@@ -266,6 +276,8 @@ class App:
         self.transcripts_dir = tk.StringVar(value=config.get("transcripts", str(DEFAULT_DIR / "Trascrizioni")))
         self.videos_dir = tk.StringVar(value=config.get("videos", str(DEFAULT_DIR / "Video")))
         self.keep_video = tk.BooleanVar(value=config.get("keep_video", False))
+        self.split_download = tk.BooleanVar(value=config.get("split_download", False))
+        self.split_limit_mb = tk.StringVar(value=str(config.get("split_limit_mb", 500)))
         self.model = tk.StringVar(value=config.get("quality", "balanced") if config.get("quality", "balanced") in QUALITY_CHOICES else "balanced")
         self.spoken = tk.StringVar(value=config.get("spoken", "auto"))
         self.engine = tk.StringVar(value=config.get("engine", "local"))
@@ -310,6 +322,7 @@ class App:
             "transcripts": self.transcripts_dir.get(), "videos": self.videos_dir.get(),
             "keep_video": self.keep_video.get(), "quality": self.model.get(), "spoken": self.spoken.get(),
             "webex_browser": self.webex_browser,
+            "split_download": self.split_download.get(), "split_limit_mb": self.split_limit_mb.get(),
             "formats": [fmt for fmt, enabled in self.formats.items() if enabled.get()],
             "cpu_threads": self.cpu_threads,
             "engine": self.engine.get(), "cloud_provider":self.cloud_provider.get(),
@@ -771,6 +784,12 @@ class App:
             command=self.save_config, checkbox_width=17, checkbox_height=17,
             font=("Segoe UI", 11), text_color=c["fg"],
             fg_color=c["accent"]).pack(anchor="w", padx=15, pady=(11, 9))
+        split_row = ctk.CTkFrame(advanced_body, fg_color="transparent")
+        split_row.pack(fill="x", padx=15, pady=(0, 10))
+        ctk.CTkCheckBox(split_row, text=self.t("split_download"), variable=self.split_download,
+                       command=self.save_config, fg_color=c["accent"]).pack(anchor="w")
+        self.text(split_row, self.t("split_limit"), 11).pack(side="left", pady=(5, 0))
+        ctk.CTkEntry(split_row, textvariable=self.split_limit_mb, width=88).pack(side="left", padx=8, pady=(5, 0))
         actions = ctk.CTkFrame(advanced_body, fg_color="transparent")
         actions.pack(anchor="w", padx=15, pady=(0, 12))
         self.secondary_button(actions, self.t("open"),
@@ -1164,6 +1183,16 @@ class App:
         if self.custom_name.get() and not self.lecture.get().strip():
             messagebox.showwarning(APP, self.t("title_missing"))
             return
+        split_limit = None
+        if download_only and self.split_download.get():
+            try:
+                mb = int(self.split_limit_mb.get())
+                if not 1 <= mb <= 1_000_000:
+                    raise ValueError
+                split_limit = mb * 1_000_000
+            except ValueError:
+                messagebox.showwarning(APP, self.t("split_invalid"))
+                return
         model = effective_model(self.model.get(), self.spoken.get())
         transcript_dir = Path(self.transcripts_dir.get()).expanduser()
         video_dir = Path(self.videos_dir.get()).expanduser()
@@ -1186,7 +1215,7 @@ class App:
         self.update_buttons()
         job = {"source": source, "name": requested_name, "model": model, "spoken": self.spoken.get(), "keep": self.keep_video.get(), "transcripts": transcript_dir, "videos": video_dir, "engine": self.engine.get(), "cloud_provider":self.cloud_provider.get(),"cloud_model":self.cloud_model.get(),
                "cloud_key_id":self.cloud_key_id.get(),
-               "download_only": download_only,
+               "download_only": download_only, "split_limit": split_limit,
                "formats": tuple(fmt for fmt, selected in self.formats.items() if selected.get())}
         self.pending_sources.clear()
         self.refresh_queue()
@@ -1408,7 +1437,8 @@ class App:
         folder, videos = job["transcripts"], job["videos"]
         name, num = base, 2
         while (name.casefold() in reserved or any((folder / f"{name}{sfx}").exists() for sfx in (".txt", ".srt", ".md", ".partial.txt", ".partial.srt", ".partial.md"))
-               or any((videos / f"{name}{ext}").exists() for ext in EXTS)):
+               or any((videos / f"{name}{ext}").exists() for ext in EXTS)
+               or (job.get("split_limit") and (videos / f"{name} - parts").exists())):
             name = f"{base}_{num}"
             num += 1
         job["name"] = name
@@ -1438,7 +1468,7 @@ class App:
                 except Exception as exc:
                     failures += 1
                     self.log("BATCH_ITEM_FAILED")
-                    if isinstance(exc, RuntimeError) and str(exc) in (WEBEX_ERRORS | {"compression_failed"}):
+                    if isinstance(exc, RuntimeError) and str(exc) in (WEBEX_ERRORS | {"compression_failed", "split_failed"}):
                         self.send("webex_error", str(exc))
                 completed += 1
                 self.send("status", f"{completed}/{len(sources)}")
@@ -1529,7 +1559,7 @@ class App:
                 media, title = self.download(source, Path(temp))
                 self.resolve_name(job, media, title)
                 if job.get("download_only"):
-                    self.compress_recording(media, job["videos"] / (job["name"] + ".mp4"))
+                    self.compress_recording(media, job["videos"] / (job["name"] + ".mp4"), job.get("split_limit"))
                     return
                 if job["keep"]:
                     self.send("status", self.t("video_copy"))
@@ -1548,11 +1578,11 @@ class App:
                 raise RuntimeError("notfound")
             self.resolve_name(job, media)
             if job.get("download_only"):
-                self.compress_recording(media, job["videos"] / (job["name"] + ".mp4"))
+                self.compress_recording(media, job["videos"] / (job["name"] + ".mp4"), job.get("split_limit"))
             else:
                 self.transcribe_engine(job, media, False)
 
-    def compress_recording(self, media, destination):
+    def compress_recording(self, media, destination, split_limit=None):
         self.check_cancel()
         self.send("status", self.t("compressing"))
         with tempfile.TemporaryDirectory(prefix=".scribelane-", dir=destination.parent) as staging:
@@ -1563,23 +1593,72 @@ class App:
                 "-vf", "scale=w='min(iw,1920)':h='min(ih,1080)':force_original_aspect_ratio=decrease:force_divisible_by=2,setsar=1",
                 "-c:v", "libx264", "-preset", "medium", "-crf", "24", "-pix_fmt", "yuv420p",
                 "-c:a", "aac", "-b:a", "128k", "-ac", "2",
-                "-movflags", "+faststart", str(staged),
+                "-movflags", "+faststart",
             ]
-            with subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-                                  stderr=subprocess.DEVNULL, creationflags=subprocess.CREATE_NO_WINDOW) as encoder:
-                while encoder.poll() is None:
-                    if self.stop_event.wait(.2):
-                        encoder.kill()
-                        encoder.wait()
-                        raise JobCancelled()
-                if encoder.returncode != 0 or not staged.is_file() or not staged.stat().st_size:
-                    self.log("COMPRESSION_FAILED")
-                    raise RuntimeError("compression_failed")
+            if split_limit:
+                command += ["-force_key_frames", "expr:gte(t,n_forced*2)"]
+            self.run_media_command([*command, str(staged)], "compression_failed")
+            if not staged.is_file() or not staged.stat().st_size:
+                raise RuntimeError("compression_failed")
             self.check_cancel()
-            staged.rename(destination)
+            if split_limit and staged.stat().st_size > split_limit:
+                self.split_recording(staged, destination.with_name(destination.stem + " - parts"), split_limit)
+            else:
+                staged.rename(destination)
         self.log("COMPRESSED_RECORDING_SAVED")
         self.send("progress", 100)
 
+    def run_media_command(self, command, error):
+        self.check_cancel()
+        with subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                              stderr=subprocess.DEVNULL, creationflags=subprocess.CREATE_NO_WINDOW) as encoder:
+            while encoder.poll() is None:
+                if self.stop_event.wait(.2):
+                    encoder.kill()
+                    encoder.wait()
+                    raise JobCancelled()
+            if encoder.returncode:
+                self.log(error.upper())
+                raise RuntimeError(error)
+
+    def split_recording(self, media, destination, limit):
+        import av
+
+        self.send("status", self.t("splitting"))
+        with av.open(str(media)) as recording:
+            duration = (recording.duration or 0) / av.time_base
+        if duration <= 0:
+            raise RuntimeError("split_failed")
+        interval = min(duration / 2, duration * limit / media.stat().st_size * .9)
+        with tempfile.TemporaryDirectory(prefix="split-", dir=media.parent) as staging:
+            staging = Path(staging)
+            parts_dir = staging / "parts"
+            parts_dir.mkdir()
+            # Escape percent characters in user-selected directory names for FFmpeg.
+            pattern = str(parts_dir).replace("%", "%%") + "/Part-%04d.mp4"
+            for _ in range(12):
+                self.run_media_command([
+                    imageio_ffmpeg.get_ffmpeg_exe(), "-nostdin", "-v", "error",
+                    "-i", str(media), "-map", "0", "-c", "copy",
+                    "-f", "segment", "-segment_time", str(interval),
+                    "-reset_timestamps", "1", "-segment_format_options", "movflags=+faststart",
+                    pattern,
+                ], "split_failed")
+                parts = sorted(parts_dir.glob("Part-*.mp4"))
+                if not parts:
+                    break
+                largest = max(part.stat().st_size for part in parts)
+                if largest <= limit:
+                    self.check_cancel()
+                    parts_dir.rename(destination)
+                    return
+                if interval <= .25:
+                    break
+                interval = max(.25, interval * min(.75, .9 * limit / largest))
+                for part in parts:
+                    part.unlink()
+        self.log("SPLIT_FAILED")
+        raise RuntimeError("split_failed")
 
     def transcribe_engine(self, job, media, network_media):
         if job["engine"] != "cloud":
