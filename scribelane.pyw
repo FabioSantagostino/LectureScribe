@@ -175,10 +175,9 @@ I18N["it"].update({
     "split_limit": "Limite per parte (MB)",
     "split_invalid": "Inserisci un limite intero da 1 a 1000000 MB.",
     "splitting": "Divisione in parti…",
-    "split_failed": "Impossibile creare parti entro il limite scelto. Aumenta il limite e riprova.",
+    "split_failed": "Impossibile creare parti entro il limite scelto usando i fotogrammi chiave originali. Aumenta il limite e riprova.",
+    "split_format_failed": "Impossibile salvare le parti nel formato della registrazione. Disattiva la divisione per salvare il file intero.",
     "download_only": "Scarica soltanto",
-    "compressing": "Compressione della registrazione…",
-    "compression_failed": "Impossibile comprimere la registrazione. Controlla il log diagnostico.",
     "downloads_finished": "Download terminati",
 })
 I18N["en"].update({
@@ -186,10 +185,9 @@ I18N["en"].update({
     "split_limit": "Maximum per part (MB)",
     "split_invalid": "Enter a whole number between 1 and 1000000 MB.",
     "splitting": "Splitting into parts…",
-    "split_failed": "Could not split the recording within the chosen limit. Increase the limit and try again.",
+    "split_failed": "Could not split the recording within the chosen limit using its original keyframes. Increase the limit and try again.",
+    "split_format_failed": "Could not save parts in the recording’s format. Disable splitting to save the whole file.",
     "download_only": "Download only",
-    "compressing": "Compressing the recording…",
-    "compression_failed": "Could not compress the recording. Check the diagnostic log.",
     "downloads_finished": "Downloads finished",
 })
 
@@ -1437,7 +1435,7 @@ class App:
         folder, videos = job["transcripts"], job["videos"]
         name, num = base, 2
         while (name.casefold() in reserved or any((folder / f"{name}{sfx}").exists() for sfx in (".txt", ".srt", ".md", ".partial.txt", ".partial.srt", ".partial.md"))
-               or any((videos / f"{name}{ext}").exists() for ext in EXTS)
+               or any((videos / f"{name}{ext}").exists() for ext in EXTS | {media.suffix, media.suffix.lower()})
                or (job.get("split_limit") and (videos / f"{name} - parts").exists())):
             name = f"{base}_{num}"
             num += 1
@@ -1468,7 +1466,7 @@ class App:
                 except Exception as exc:
                     failures += 1
                     self.log("BATCH_ITEM_FAILED")
-                    if isinstance(exc, RuntimeError) and str(exc) in (WEBEX_ERRORS | {"compression_failed", "split_failed"}):
+                    if isinstance(exc, RuntimeError) and str(exc) in (WEBEX_ERRORS | {"split_failed", "split_format_failed"}):
                         self.send("webex_error", str(exc))
                 completed += 1
                 self.send("status", f"{completed}/{len(sources)}")
@@ -1559,7 +1557,7 @@ class App:
                 media, title = self.download(source, Path(temp))
                 self.resolve_name(job, media, title)
                 if job.get("download_only"):
-                    self.compress_recording(media, job["videos"] / (job["name"] + ".mp4"), job.get("split_limit"))
+                    self.save_recording(media, job["videos"] / (job["name"] + media.suffix.lower()), job.get("split_limit"))
                     return
                 if job["keep"]:
                     self.send("status", self.t("video_copy"))
@@ -1578,34 +1576,22 @@ class App:
                 raise RuntimeError("notfound")
             self.resolve_name(job, media)
             if job.get("download_only"):
-                self.compress_recording(media, job["videos"] / (job["name"] + ".mp4"), job.get("split_limit"))
+                self.save_recording(media, job["videos"] / (job["name"] + media.suffix.lower()), job.get("split_limit"))
             else:
                 self.transcribe_engine(job, media, False)
 
-    def compress_recording(self, media, destination, split_limit=None):
+    def save_recording(self, media, destination, split_limit=None):
         self.check_cancel()
-        self.send("status", self.t("compressing"))
-        with tempfile.TemporaryDirectory(prefix=".scribelane-", dir=destination.parent) as staging:
-            staged = Path(staging) / destination.name
-            command = [
-                imageio_ffmpeg.get_ffmpeg_exe(), "-nostdin", "-v", "error",
-                "-i", str(media), "-map", "0:V:0?", "-map", "0:a:0?",
-                "-vf", "scale=w='min(iw,1920)':h='min(ih,1080)':force_original_aspect_ratio=decrease:force_divisible_by=2,setsar=1",
-                "-c:v", "libx264", "-preset", "medium", "-crf", "24", "-pix_fmt", "yuv420p",
-                "-c:a", "aac", "-b:a", "128k", "-ac", "2",
-                "-movflags", "+faststart",
-            ]
-            if split_limit:
-                command += ["-force_key_frames", "expr:gte(t,n_forced*2)"]
-            self.run_media_command([*command, str(staged)], "compression_failed")
-            if not staged.is_file() or not staged.stat().st_size:
-                raise RuntimeError("compression_failed")
-            self.check_cancel()
-            if split_limit and staged.stat().st_size > split_limit:
-                self.split_recording(staged, destination.with_name(destination.stem + " - parts"), split_limit)
-            else:
+        if split_limit and media.stat().st_size > split_limit:
+            self.split_recording(media, destination, split_limit)
+        else:
+            self.send("status", self.t("video_copy"))
+            with tempfile.TemporaryDirectory(prefix=".scribelane-", dir=destination.parent) as staging:
+                staged = Path(staging) / destination.name
+                shutil.copy2(media, staged)
+                self.check_cancel()
                 staged.rename(destination)
-        self.log("COMPRESSED_RECORDING_SAVED")
+        self.log("RECORDING_SAVED")
         self.send("progress", 100)
 
     def run_media_command(self, command, error):
@@ -1630,27 +1616,28 @@ class App:
         if duration <= 0:
             raise RuntimeError("split_failed")
         interval = min(duration / 2, duration * limit / media.stat().st_size * .9)
-        with tempfile.TemporaryDirectory(prefix="split-", dir=media.parent) as staging:
+        with tempfile.TemporaryDirectory(prefix="split-", dir=destination.parent) as staging:
             staging = Path(staging)
             parts_dir = staging / "parts"
             parts_dir.mkdir()
             # Escape percent characters in user-selected directory names for FFmpeg.
-            pattern = str(parts_dir).replace("%", "%%") + "/Part-%04d.mp4"
+            suffix = destination.suffix
+            pattern = str(parts_dir).replace("%", "%%") + f"/Part-%04d{suffix}"
             for _ in range(12):
                 self.run_media_command([
                     imageio_ffmpeg.get_ffmpeg_exe(), "-nostdin", "-v", "error",
-                    "-i", str(media), "-map", "0", "-c", "copy",
+                    "-i", str(media), "-map", "0:V:0?", "-map", "0:a?", "-c", "copy",
                     "-f", "segment", "-segment_time", str(interval),
-                    "-reset_timestamps", "1", "-segment_format_options", "movflags=+faststart",
+                    "-reset_timestamps", "1",
                     pattern,
-                ], "split_failed")
-                parts = sorted(parts_dir.glob("Part-*.mp4"))
+                ], "split_format_failed")
+                parts = sorted(parts_dir.glob(f"Part-*{suffix}"))
                 if not parts:
                     break
                 largest = max(part.stat().st_size for part in parts)
                 if largest <= limit:
                     self.check_cancel()
-                    parts_dir.rename(destination)
+                    parts_dir.rename(destination.with_name(destination.stem + " - parts"))
                     return
                 if interval <= .25:
                     break

@@ -1,4 +1,5 @@
 import itertools
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -10,13 +11,14 @@ from test_webex import PLAYBACK, PLAYLIST, gui
 
 
 class SettingsAndQueueTests(unittest.TestCase):
-    def test_download_only_compresses_without_transcribing(self):
+    def test_download_only_preserves_format_without_transcribing(self):
         app = gui.App.__new__(gui.App)
         app.send, app.log = Mock(), Mock()
         app.stop_event = Event()
         app.transcribe_engine = Mock()
         app.try_parallel_queue = Mock()
-        app.compress_recording = Mock()
+        app.t = lambda key: key
+        app.run_media_command = Mock()
 
         def download(url, temp):
             media = temp / "recording.webm"
@@ -29,11 +31,40 @@ class SettingsAndQueueTests(unittest.TestCase):
             job = {"name": None, "transcripts": folder, "videos": folder, "keep": False,
                    "download_only": True, "engine": "local"}
             app.worker_batch(job, [{"source": PLAYBACK}, {"source": PLAYLIST}])
-            self.assertEqual(app.compress_recording.call_count, 2)
-            self.assertEqual(app.compress_recording.call_args.args[1], folder / "Lecture.mp4", None)
+            self.assertEqual({p.name: p.read_bytes() for p in folder.iterdir()},
+                             {"Lecture.webm": b"video", "Lecture_2.webm": b"video"})
+            app.run_media_command.assert_not_called()
             app.transcribe_engine.assert_not_called()
             app.try_parallel_queue.assert_not_called()
             app.send.assert_called_with("done_downloads", (2, 0, str(folder)))
+
+    def test_split_preserves_codec_and_respects_size_limit(self):
+        import av
+
+        app = gui.App.__new__(gui.App)
+        app.send, app.log = Mock(), Mock()
+        app.t = lambda key: key
+        app.stop_event = Event()
+        with tempfile.TemporaryDirectory() as temp:
+            folder = Path(temp)
+            media = folder / "source.mp4"
+            subprocess.run([
+                gui.imageio_ffmpeg.get_ffmpeg_exe(), "-nostdin", "-v", "error",
+                "-f", "lavfi", "-i", "testsrc2=size=160x120:rate=10", "-t", "6",
+                "-c:v", "mpeg4", "-g", "10", str(media),
+            ], check=True, capture_output=True)
+            limit = media.stat().st_size // 2
+            app.save_recording(media, folder / "Lecture.mp4", limit)
+            parts = sorted((folder / "Lecture - parts").glob("Part-*.mp4"))
+            self.assertGreater(len(parts), 1)
+            self.assertFalse((folder / "Lecture.mp4").exists())
+            frames = 0
+            for part in parts:
+                self.assertLessEqual(part.stat().st_size, limit)
+                with av.open(str(part)) as recording:
+                    self.assertEqual(recording.streams.video[0].codec_context.name, "mpeg4")
+                    frames += sum(1 for _ in recording.decode(video=0))
+            self.assertEqual(frames, 60)
 
     def test_kept_download_survives_transcription_failure(self):
         app = gui.App.__new__(gui.App)

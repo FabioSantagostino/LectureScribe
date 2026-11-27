@@ -22,9 +22,9 @@ Se provieni da una versione precedente alla 1.6.0, scarica lo ZIP completo e avv
 
 Premi **Scarica soltanto** su una registrazione Webex, un link HLS, un file locale o una coda. ScribeLane salva i risultati nella cartella video scelta in **Impostazioni**, anche quando **Conserva il video scaricato** è disattivato. Il lavoro non richiede un modello Whisper né una chiave cloud.
 
-L'app comprime sempre il risultato in MP4 con video H.264 fino a 1080p e audio AAC. I file più piccoli conservano la risoluzione di partenza. Il risparmio di spazio dipende dal contenuto e dalla compressione già presente nel file di origine.
+ScribeLane salva la registrazione nel suo formato originale, senza ricodificare audio o video.
 
-Per rispettare un limite di caricamento, vai in **Impostazioni → File e cartelle**, attiva **Dividi i file con «Scarica soltanto»** e inserisci il limite per parte in MB. Il valore iniziale è 500 MB. Se l’MP4 compresso rientra nel limite, resta un unico file. Altrimenti ScribeLane salva MP4 numerati in una sottocartella `Nome registrazione - parts` della cartella Video. L’app verifica la dimensione effettiva di tutte le parti. Se un limite troppo basso impedisce di completare la divisione, chiede di aumentarlo.
+Per rispettare un limite di caricamento, vai in **Impostazioni → File e cartelle**, attiva **Dividi i file con «Scarica soltanto»** e inserisci il limite per parte in MB. Il valore iniziale è 500 MB. Se la registrazione rientra nel limite, resta un unico file. Altrimenti ScribeLane salva le parti numerate nella sottocartella `Nome registrazione - parts` della cartella Video e verifica la dimensione effettiva di ogni parte. I tagli video si basano sui fotogrammi chiave già presenti. Se un limite troppo basso impedisce la divisione, l’app chiede di aumentarlo.
 
 ## Trascrivere da un link Webex `/playback`
 
